@@ -216,42 +216,70 @@ def insert_data(conn, df):
     conn.commit()
 
 def main():
-    # Инициализация клиента Яндекс.Метрики
-    client = YandexMetrikaLogsapi(
-        access_token=ACCESS_TOKEN,
-        default_url_params={'counterId': COUNTER_ID}
-    )
-
-    # Запрос данных
-    params = {
-        "fields": ",".join(FIELDS),
-        "source": "visits",
-        "date1": date_yesterday,
-        "date2": date_yesterday
-    }
-
-    # Создание и обработка запроса
-    print(f"Запрашиваю данные за {date_yesterday}...")
-    request = client.create().post(params=params)
-    request_id = request["log_request"]["request_id"]
-    print(f"Запрос создан, ID: {request_id}")
-    
-    # Ожидание обработки
-    info = wait_for_report_processing(client, request_id)
-    parts_count = len(info["log_request"]["parts"])
-    print(f"Отчет обработан, количество частей: {parts_count}")
-    
-    # Загрузка данных
-    df = download_report_parts(client, request_id, parts_count)
-    
-    # Подключение к БД и сохранение
-    conn = create_connection()
     try:
-        create_table(conn)
-        insert_data(conn, df)
-        print(f"Успешно сохранено {len(df)} записей за {date_yesterday}")
+        # Инициализация клиента Яндекс.Метрики
+        client = YandexMetrikaLogsapi(
+            access_token=ACCESS_TOKEN,
+            default_url_params={'counterId': COUNTER_ID}
+        )
+
+        # Запрос данных
+        params = {
+            "fields": ",".join(FIELDS),
+            "source": "visits",
+            "date1": date_yesterday,
+            "date2": date_yesterday
+        }
+
+        # Создание и обработка запроса
+        print(f"Запрашиваю данные за {date_yesterday}...")
+        request = client.create().post(params=params)
+        request_id = request["log_request"]["request_id"]
+        print(f"Запрос создан, ID: {request_id}")
+        
+        # Ожидание обработки
+        info = wait_for_report_processing(client, request_id)
+        parts_count = len(info["log_request"]["parts"])
+        print(f"Отчет обработан, количество частей: {parts_count}")
+        
+        # Загрузка данных
+        df = download_report_parts(client, request_id, parts_count)
+        
+        # Подключение к БД и сохранение
+        conn = None
+        try:
+            conn = create_connection()
+            create_table(conn)
+            insert_data(conn, df)
+            print(f"Успешно сохранено {len(df)} записей за {date_yesterday}")
+        except Exception as e:
+            print(f"Ошибка при работе с БД: {e}")
+            raise  # Пробрасываем исключение дальше
+        finally:
+            if conn is not None:
+                conn.close()
+                
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
     finally:
-        conn.close()
+        # Удаление временного файла
+        cleanup_temp_files()
+
+def cleanup_temp_files():
+    """Удаление всех временных файлов"""
+    temp_files = [
+        "yandex-metrika-visits.csv",
+        "yandex-metrika-visits.json",
+        "yandex-metrika-visits.xlsx"
+    ]
+    
+    for file in temp_files:
+        try:
+            if os.path.exists(file):
+                os.remove(file)
+                print(f"Временный файл {file} удалён")
+        except Exception as e:
+            print(f"Ошибка при удалении файла {file}: {e}")
 
 if __name__ == "__main__":
     main()
