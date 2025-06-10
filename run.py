@@ -7,9 +7,10 @@ import configparser
 import psycopg2
 from psycopg2.extras import execute_batch
 
+dirname = os.path.dirname(__file__)
 # Чтение конфигурации
 config = configparser.ConfigParser()
-config.read('config.ini')
+config.read(os.path.join(dirname, "config.ini"))
 
 # Параметры подключения к БД
 DB_CONFIG = {
