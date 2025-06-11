@@ -90,7 +90,7 @@ def create_table(conn):
     """Создает таблицу для хранения hits с watchID в качестве ключа"""
     with conn.cursor() as cursor:
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS yandex_metrika_hits (
+        CREATE TABLE IF NOT EXISTS yandex_metrika_pageviews (
             watch_id TEXT PRIMARY KEY,
             client_id TEXT,
             date_time TIMESTAMP,
@@ -116,7 +116,7 @@ def insert_data(conn, df):
             ))
 
         execute_batch(cursor, """
-            INSERT INTO yandex_metrika_hits (
+            INSERT INTO yandex_metrika_pageviews (
                 watch_id, client_id, date_time,
                 title, url, is_page_view
             ) VALUES (
@@ -163,9 +163,9 @@ def process_week(client, conn, date1, date2):
 def cleanup_temp_files():
     """Удаление всех временных файлов"""
     temp_files = [
-        "yandex-metrika-hits.csv",
-        "yandex-metrika-hits.json",
-        "yandex-metrika-hits.xlsx"
+        "yandex_metrika_pageviews.csv",
+        "yandex_metrika_pageviews.json",
+        "yandex_metrika_pageviews.xlsx"
     ]
     
     for file in temp_files:
