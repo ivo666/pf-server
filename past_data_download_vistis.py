@@ -292,7 +292,7 @@ def main():
         )
 
         # Получаем диапазоны дат по неделям
-        week_ranges = get_week_ranges("2024-01-01", "2025-06-08")
+        week_ranges = get_week_ranges("2025-03-10", "2025-06-08")
         
         # Подключение к БД
         conn = create_connection()
