@@ -90,7 +90,15 @@ def download_report_parts(client, request_id, parts_count):
         part_data = part().to_dicts()
         all_data.extend(part_data)
     
-    return pd.DataFrame(all_data, columns=FIELDS)
+    df = pd.DataFrame(all_data, columns=FIELDS)
+    
+    # Отладочная информация о данных
+    print("\nПример данных из отчета:")
+    print(df[['ym:s:isNewUser', 'ym:s:clientID', 'ym:s:visitID']].head(10))
+    print("\nТип данных ym:s:isNewUser:", type(df['ym:s:isNewUser'].iloc[0]) if len(df) > 0 else "Нет данных")
+    print("Уникальные значения ym:s:isNewUser:", df['ym:s:isNewUser'].unique())
+    
+    return df
 
 def create_connection():
     """Создает подключение к PostgreSQL"""
@@ -106,7 +114,7 @@ def create_table(conn):
             watch_ids TEXT[],
             date DATE,
             date_time TIMESTAMP,
-            is_new_user INTEGER,
+            is_new_user TEXT,  -- Изменено на TEXT
             start_url TEXT,
             end_url TEXT,
             page_views INTEGER,
@@ -158,13 +166,16 @@ def insert_data(conn, df):
                 watch_ids = watch_ids.strip('[]').split(',')
                 watch_ids = [x.strip(' "\'') for x in watch_ids if x.strip()]
             
+            # Сохраняем isNewUser как строку без преобразований
+            is_new_user = str(row.get('ym:s:isNewUser', ''))  # Преобразуем в строку
+            
             data.append((
                 row.get('ym:s:clientID'),
                 row.get('ym:s:visitID'),
                 watch_ids or None,
                 row.get('ym:s:date'),
                 pd.to_datetime(row.get('ym:s:dateTime')),
-                1 if row.get('ym:s:isNewUser') else 0,
+                is_new_user,  # Сохраняем как строку
                 row.get('ym:s:startURL'),
                 row.get('ym:s:endURL'),
                 int(row.get('ym:s:pageViews', 0)),
@@ -246,7 +257,7 @@ def process_week(client, conn, date1, date2):
         }
 
         # Создание и обработка запроса
-        print(f"Запрашиваю данные с {date1} по {date2}...")
+        print(f"\nЗапрашиваю данные с {date1} по {date2}...")
         request = client.create().post(params=params)
         request_id = request["log_request"]["request_id"]
         print(f"Запрос создан, ID: {request_id}")
@@ -292,7 +303,7 @@ def main():
         )
 
         # Получаем диапазоны дат по неделям
-        week_ranges = get_week_ranges("2025-03-10", "2025-06-08")
+        week_ranges = get_week_ranges("2025-03-16", "2025-03-31")
         
         # Подключение к БД
         conn = create_connection()
@@ -305,7 +316,6 @@ def main():
                 process_week(client, conn, date1, date2)
             except Exception as e:
                 print(f"Прерывание обработки недели {date1}-{date2} из-за ошибки: {e}")
-                # Можно добавить задержку перед повторной попыткой
                 sleep(60)
                 continue
                 
