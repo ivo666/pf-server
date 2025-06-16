@@ -79,7 +79,7 @@ def create_connection():
     return psycopg2.connect(**DB_CONFIG)
 
 def create_table(conn):
-    """Создает таблицу для хранения визитов"""
+    """Создает таблицу для хранения визитов (с is_new_user как TEXT)"""
     with conn.cursor() as cursor:
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS yandex_metrika_visits (
@@ -88,7 +88,7 @@ def create_table(conn):
             watch_ids TEXT[],
             date DATE,
             date_time TIMESTAMP,
-            is_new_user INTEGER,
+            is_new_user TEXT,  -- Изменено с INTEGER на TEXT
             start_url TEXT,
             end_url TEXT,
             page_views INTEGER,
@@ -131,7 +131,7 @@ def create_table(conn):
     conn.commit()
 
 def insert_data(conn, df):
-    """Вставляет данные в PostgreSQL"""
+    """Вставляет данные в PostgreSQL (с корректной обработкой is_new_user)"""
     with conn.cursor() as cursor:
         data = []
         for _, row in df.iterrows():
@@ -140,13 +140,16 @@ def insert_data(conn, df):
                 watch_ids = watch_ids.strip('[]').split(',')
                 watch_ids = [x.strip(' "\'') for x in watch_ids if x.strip()]
             
+            # Исправлено: is_new_user теперь передается как строка (без преобразования в 1/0)
+            is_new_user = str(row.get('ym:s:isNewUser', ''))  # Преобразуем в строку
+            
             data.append((
                 row.get('ym:s:clientID'),
                 row.get('ym:s:visitID'),
                 watch_ids or None,
                 row.get('ym:s:date'),
                 pd.to_datetime(row.get('ym:s:dateTime')),
-                1 if row.get('ym:s:isNewUser') else 0,
+                is_new_user,  # Передается как TEXT
                 row.get('ym:s:startURL'),
                 row.get('ym:s:endURL'),
                 int(row.get('ym:s:pageViews', 0)),
@@ -255,7 +258,7 @@ def main():
             print(f"Успешно сохранено {len(df)} записей за {date_yesterday}")
         except Exception as e:
             print(f"Ошибка при работе с БД: {e}")
-            raise  # Пробрасываем исключение дальше
+            raise
         finally:
             if conn is not None:
                 conn.close()
@@ -263,7 +266,6 @@ def main():
     except Exception as e:
         print(f"Произошла ошибка: {e}")
     finally:
-        # Удаление временного файла
         cleanup_temp_files()
 
 def cleanup_temp_files():
