@@ -127,9 +127,8 @@ def create_table(conn):
             date_time TIMESTAMP,
             title TEXT,
             url TEXT,
-            is_page_view BOOLEAN,
-            artificial BOOLEAN,
-            params JSONB,
+            is_page_view TEXT,
+            artificial TEXT,
             event_category TEXT,
             event_action TEXT,
             event_label TEXT,
@@ -156,9 +155,8 @@ def insert_data(conn, df):
                 pd.to_datetime(row.get('ym:pv:dateTime')),
                 row.get('ym:pv:title'),
                 row.get('ym:pv:URL'),
-                bool(row.get('ym:pv:isPageView')),
-                bool(row.get('ym:pv:artificial')),
-                json.dumps(params) if params else None,
+                str(row.get('ym:pv:isPageView')) if pd.notna(row.get('ym:pv:isPageView')) else None,
+                str(row.get('ym:pv:artificial')) if pd.notna(row.get('ym:pv:artificial')) else None,
                 params.get('eventCategory'),
                 params.get('eventAction'),
                 params.get('eventLabel'),
@@ -172,12 +170,12 @@ def insert_data(conn, df):
         execute_batch(cursor, """
             INSERT INTO yandex_metrika_hits_with_params (
                 watch_id, page_view_id, client_id, date_time,
-                title, url, is_page_view, artificial, params,
+                title, url, is_page_view, artificial,
                 event_category, event_action, event_label, button_location,
                 event_content, event_context, action_group, page_path
             ) VALUES (
                 %s, %s, %s, %s,
-                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s, %s, %s
             )
@@ -260,6 +258,9 @@ def main():
         if 'conn' in locals() and conn is not None:
             conn.close()
         print("Обработка завершена")
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
