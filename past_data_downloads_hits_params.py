@@ -43,9 +43,14 @@ FIELDS = [
 ]
 
 def get_date_range():
-    """Генерирует диапазон дат с 1 июня по вчера"""
-    start_date = datetime(2025, 6, 1).date()
-    end_date = datetime.now().date() - timedelta(days=1)
+    """Генерирует диапазон дат с 1 июня текущего года по вчера"""
+    current_year = datetime.now().year
+    start_date = datetime(current_year, 6, 1).date()  # 1 июня текущего года
+    end_date = datetime.now().date() - timedelta(days=1)  # Вчерашний день
+    
+    # Если текущая дата раньше 1 июня, берем предыдущий год
+    if datetime.now().date() < start_date:
+        start_date = datetime(current_year - 1, 6, 1).date()
     
     dates = []
     current_date = start_date
@@ -228,6 +233,7 @@ def main():
 
         # Получаем список дат для обработки
         dates = get_date_range()
+        print(f"Будут обработаны даты с {dates[0]} по {dates[-1]}")
         
         # Подключение к БД
         conn = create_connection()
@@ -258,9 +264,6 @@ def main():
         if 'conn' in locals() and conn is not None:
             conn.close()
         print("Обработка завершена")
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
