@@ -67,7 +67,7 @@ def update_cdm_page_views():
         """
         
         # SQL для заполнения таблицы
-        update_data_sql = """
+        update_data_sql = r"""
         INSERT INTO cdm.table_page_views
         SELECT 
             ymh.watch_id,
