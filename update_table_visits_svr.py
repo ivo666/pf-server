@@ -66,7 +66,7 @@ def create_visits_table():
         )
         """
         
-        # SQL для заполнения таблицы
+        # SQL для заполнения таблицы с исправленным преобразованием is_new_user
         insert_data_sql = """
         INSERT INTO cdm.table_visits_svr
         SELECT 
@@ -75,7 +75,7 @@ def create_visits_table():
             rv.date,
             rv.date_time,
             rv.visit_duration,
-            CASE WHEN rv.is_new_user THEN 1 ELSE 0 END,
+            CASE WHEN rv.is_new_user = '1' THEN 1 ELSE 0 END,  -- Исправлено сравнение с текстовым значением
             split_part(rv.start_url, '?', 1) AS start_url,
             split_part(rv.end_url, '?', 1) AS end_url,
             cpv.cnt_page_views,
