@@ -3,14 +3,16 @@ import logging
 import configparser
 import psycopg2
 from psycopg2 import sql
-from psycopg2.extras import execute_batch
 from datetime import datetime
 
 # Настройка логгирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='update_clients_table.log'
+    handlers=[
+        logging.FileHandler('update_clients_table.log'),
+        logging.StreamHandler()
+    ]
 )
 
 def get_db_config():
@@ -27,7 +29,7 @@ def get_db_config():
         'database': config['Database']['DATABASE'],
         'user': config['Database']['USER'],
         'password': config['Database']['PASSWORD'],
-        'port': config.get('Database', 'PORT', fallback='5432')  # Порт по умолчанию для PostgreSQL
+        'port': config.get('Database', 'PORT', fallback='5432')
     }
 
 def update_clients_table():
@@ -37,52 +39,58 @@ def update_clients_table():
         
         # Подключение к БД
         conn = psycopg2.connect(**db_config)
-        conn.autocommit = False  # Для явного управления транзакциями
+        conn.autocommit = False
         cursor = conn.cursor()
         
         logging.info("Successfully connected to the database")
         
+        # Создаем схему cdm если не существует
+        cursor.execute("CREATE SCHEMA IF NOT EXISTS cdm")
+        conn.commit()
+        
         # SQL для создания таблицы, если она не существует
         create_table_sql = """
-        CREATE TABLE IF NOT EXISTS table_clients_svr (
+        CREATE TABLE IF NOT EXISTS cdm.table_clients_svr (
             client_id text PRIMARY KEY,
             city text,
             browser text,
-            screen_width text,
-            screen_height text
+            screen_width integer,
+            screen_height integer
         )
         """
         
         # SQL для обновления данных в таблице
         update_data_sql = """
-        INSERT INTO table_clients_svr
-        SELECT "ym:s:clientID",
-            "ym:s:regionCity",
-            "ym:s:browser",
-            "ym:s:physicalScreenWidth",
-            "ym:s:physicalScreenHeight"
+        INSERT INTO cdm.table_clients_svr
+        SELECT 
+            client_id,
+            region_city,
+            browser,
+            physical_screen_width,
+            physical_screen_height
         FROM (
-            SELECT "ym:s:clientID",
-                "ym:s:regionCity",
-                "ym:s:deviceCategory",
-                "ym:s:browser",
-                "ym:s:physicalScreenWidth",
-                "ym:s:physicalScreenHeight",
-                ROW_NUMBER() OVER(PARTITION BY "ym:s:clientID" ORDER BY "ym:s:dateTime" DESC) AS last_visit
-            FROM yandex_metrika_visits rv
-            WHERE TRUE
-                AND "ym:s:regionCountry" = 'Russia'
-                AND "ym:s:<attribution>ReferalSource" NOT IN ('metrika.yandex.ru', 'klaue.cloudbpm.ru')
-                AND "ym:s:clientID" NOT IN (
+            SELECT 
+                client_id,
+                region_city,
+                browser,
+                physical_screen_width,
+                physical_screen_height,
+                date_time,
+                ROW_NUMBER() OVER(PARTITION BY client_id ORDER BY date_time DESC) AS last_visit
+            FROM yandex_metrika_visits
+            WHERE 
+                region_country = 'Russia'
+                AND referal_source NOT IN ('metrika.yandex.ru', 'klaue.cloudbpm.ru')
+                AND client_id NOT IN (
                     '1742907795159016963', '1690275728585926726', '1745571831246112348',
                     '1660561659524790881', '171759016385815372', '1739452086606602606',
                     '1744210585372274818', '1745570119620709361', '1745570221463237118',
                     '1745571778695559054', '1745571831246112348'
                 )
-                AND "ym:s:deviceCategory" = '1'
-                AND "ym:s:screenOrientation" = '2'
-                AND "ym:s:browser" NOT IN ('miui', 'headlesschrome', 'samsungbrowser', 'sputnik', 'maxthonbrowser')
-        ) query_last_visit
+                AND device_category = '1'
+                AND screen_orientation = '2'
+                AND browser NOT IN ('miui', 'headlesschrome', 'samsungbrowser', 'sputnik', 'maxthonbrowser')
+        ) AS last_visits
         WHERE last_visit = 1
         ON CONFLICT (client_id) DO UPDATE SET
             city = EXCLUDED.city,
@@ -99,7 +107,7 @@ def update_clients_table():
         conn.commit()
         
         # Получаем количество записей для логгирования
-        cursor.execute("SELECT COUNT(*) FROM table_clients_svr")
+        cursor.execute("SELECT COUNT(*) FROM cdm.table_clients_svr")
         count = cursor.fetchone()[0]
         logging.info(f"Data successfully updated. Total clients: {count}")
         
@@ -107,7 +115,7 @@ def update_clients_table():
         logging.error(f"Error occurred: {str(e)}", exc_info=True)
         if 'conn' in locals() and conn:
             conn.rollback()
-        raise  # Можно убрать raise, если не хотите прерывать выполнение cron
+        raise
     finally:
         if 'cursor' in locals() and cursor:
             cursor.close()
