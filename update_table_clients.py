@@ -59,7 +59,7 @@ def update_cdm_clients():
         )
         """
         
-        # SQL для заполнения таблицы с актуальными условиями
+        # SQL для заполнения таблицы (без русскоязычных комментариев)
         update_data_sql = """
         INSERT INTO cdm.table_clients
         SELECT 
@@ -92,8 +92,8 @@ def update_cdm_clients():
                     '1749632059707122060', '174854765848914695',
                     '1749814059318463188', '1660561659524790881'
                 )
-                AND device_category = '1'  # десктопы
-                AND screen_orientation = '2'  # альбомная ориентация
+                AND device_category = '1'
+                AND screen_orientation = '2'
                 AND browser NOT IN (
                     'miui', 'headlesschrome', 
                     'samsungbrowser', 'sputnik', 
