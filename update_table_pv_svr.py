@@ -66,7 +66,7 @@ def create_page_views_table():
         )
         """
         
-        # SQL для заполнения таблицы
+        # SQL для заполнения таблицы с исправленным условием is_page_view
         insert_data_sql = """
         INSERT INTO cdm.table_page_views_svr
         SELECT 
@@ -81,10 +81,10 @@ def create_page_views_table():
                 ELSE rh.url 
             END AS url,
             substring(rh.url FROM '&text=([^&]+)') AS web_search_query,
-            regexp_matches(rh.url, 'type\[\]=([^&]+)') AS type_parametres,
-            regexp_matches(rh.url, 'primenenie\[\]=([^&]+)') AS primenenie_parametres,
-            regexp_matches(rh.url, 'material\[\]=([^&]+)') AS material_parametres,
-            regexp_matches(rh.url, 'cleartype\[\]=([^&]+)') AS cleartype_parametres
+            (SELECT array_agg(match[1]) FROM regexp_matches(rh.url, 'type\[\]=([^&]+)', 'g') AS match) AS type_parametres,
+            (SELECT array_agg(match[1]) FROM regexp_matches(rh.url, 'primenenie\[\]=([^&]+)', 'g') AS match) AS primenenie_parametres,
+            (SELECT array_agg(match[1]) FROM regexp_matches(rh.url, 'material\[\]=([^&]+)', 'g') AS match) AS material_parametres,
+            (SELECT array_agg(match[1]) FROM regexp_matches(rh.url, 'cleartype\[\]=([^&]+)', 'g') AS match) AS cleartype_parametres
         FROM (
             SELECT 
                 visit_id,
@@ -94,7 +94,7 @@ def create_page_views_table():
             WHERE client_id IN (SELECT client_id FROM cdm.table_clients_svr)
         ) vw
         JOIN yandex_metrika_hits rh ON vw.watch_id = rh.watch_id
-        WHERE rh.is_page_view = 1
+        WHERE rh.is_page_view = '1'  -- Изменено на сравнение с текстовым значением
         ON CONFLICT (watch_id) DO UPDATE SET
             client_id = EXCLUDED.client_id,
             visit_id = EXCLUDED.visit_id,
