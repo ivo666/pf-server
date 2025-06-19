@@ -1,6 +1,8 @@
 import os
 import logging
 from datetime import datetime
+import sys
+import subprocess  # Используем вместо os.system
 
 # Настройка логгирования
 logging.basicConfig(
@@ -12,14 +14,40 @@ logging.basicConfig(
     ]
 )
 
+def get_python_path():
+    """Получаем путь к python из текущего окружения"""
+    return sys.executable
+
 def run_script(script_name):
     """Запуск скрипта с логированием"""
-    logging.info(f"Starting {script_name}")
+    script_path = os.path.join(os.path.dirname(__file__), script_name)
+    python_path = get_python_path()
+    
+    logging.info(f"Starting {script_name} with {python_path}")
+    
     try:
-        exit_code = os.system(f"python {script_name}")
-        if exit_code != 0:
-            raise RuntimeError(f"Script {script_name} failed with code {exit_code}")
+        # Используем subprocess вместо os.system для лучшего контроля
+        result = subprocess.run(
+            [python_path, script_path],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        
+        # Логируем вывод скрипта
+        if result.stdout:
+            logging.info(f"Output from {script_name}:\n{result.stdout}")
+        if result.stderr:
+            logging.warning(f"Errors from {script_name}:\n{result.stderr}")
+            
         logging.info(f"Successfully completed {script_name}")
+        
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Script {script_name} failed with code {e.returncode}\n"
+        error_msg += f"Output:\n{e.stdout}\n" if e.stdout else ""
+        error_msg += f"Errors:\n{e.stderr}\n" if e.stderr else ""
+        logging.error(error_msg)
+        raise RuntimeError(error_msg)
     except Exception as e:
         logging.error(f"Error executing {script_name}: {str(e)}")
         raise
