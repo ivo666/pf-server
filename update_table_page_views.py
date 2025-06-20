@@ -93,10 +93,14 @@ def update_cdm_page_views():
                 client_id,
                 unnest(watch_ids) AS watch_id
             FROM yandex_metrika_visits
-            WHERE client_id IN (SELECT client_id FROM cdm.table_clients)
+            WHERE 
+                date = CURRENT_DATE - INTERVAL '1 day'  -- ДОБАВЛЕНО: фильтр по дате
+                AND client_id IN (SELECT client_id FROM cdm.table_clients)
         ) vw
         JOIN yandex_metrika_hits ymh ON vw.watch_id = ymh.watch_id
-        WHERE ymh.is_page_view = '1'
+        WHERE 
+            ymh.is_page_view = '1'
+            AND ymh.date_time::date = CURRENT_DATE - INTERVAL '1 day'  -- ДОБАВЛЕНО: фильтр по дате
         ON CONFLICT (watch_id) DO UPDATE SET
             client_id = EXCLUDED.client_id,
             visit_id = EXCLUDED.visit_id,
