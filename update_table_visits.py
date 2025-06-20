@@ -67,7 +67,7 @@ def update_cdm_visits():
         )
         """
         
-        # SQL для заполнения таблицы
+        # SQL для заполнения таблицы    
         update_data_sql = """
         INSERT INTO cdm.table_visits
         SELECT
@@ -113,9 +113,12 @@ def update_cdm_visits():
                 visit_id,
                 COUNT(DISTINCT url) AS cnt_page_views
             FROM cdm.table_page_views
+            WHERE hit_ts::date = CURRENT_DATE - INTERVAL '1 day'  -- ДОБАВЛЕНО: фильтр по дате
             GROUP BY visit_id
         ) AS cpv ON cpv.visit_id = ymv.visit_id
-        WHERE ymv.client_id IN (SELECT client_id FROM cdm.table_clients)
+        WHERE 
+            ymv.date = CURRENT_DATE - INTERVAL '1 day'  -- ДОБАВЛЕНО: фильтр по дате
+            AND ymv.client_id IN (SELECT client_id FROM cdm.table_clients)
         ON CONFLICT (visit_id) DO UPDATE SET
             client_id = EXCLUDED.client_id,
             visit_date = EXCLUDED.visit_date,
