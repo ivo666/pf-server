@@ -44,7 +44,7 @@ def check_data():
         ]
         
         # Добавляем пароль из переменной окружения
-        env = {'PGPASSWORD': 'Bdfyjd'}
+        env = {'PGPASSWORD': 'BdfyjdDbrnjh'}
         
         result = subprocess.run(
             cmd,
