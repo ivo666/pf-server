@@ -60,6 +60,8 @@ def update_cdm_clients():
         """
         
         # SQL для заполнения таблицы (без русскоязычных комментариев)
+        # ... (остальной код остается без изменений)
+
         update_data_sql = """
         INSERT INTO cdm.table_clients
         SELECT 
@@ -82,7 +84,8 @@ def update_cdm_clients():
                 ) AS last_visit
             FROM yandex_metrika_visits
             WHERE 
-                region_country = 'Russia'
+                date = CURRENT_DATE - INTERVAL '1 day'  -- ДОБАВЛЕНО: фильтр по дате
+                AND region_country = 'Russia'
                 AND referal_source NOT IN ('metrika.yandex.ru', 'klaue.cloudbpm.ru')
                 AND client_id NOT IN (
                     '1742907795159016963', '1690275728585926726', '1745571831246112348',
