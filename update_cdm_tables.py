@@ -2,7 +2,9 @@ import os
 import logging
 from datetime import datetime
 import sys
-import subprocess  # Используем вместо os.system
+import subprocess
+import configparser
+from pathlib import Path
 
 # Настройка логгирования
 logging.basicConfig(
@@ -13,6 +15,23 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+def get_db_config():
+    """Получаем конфигурацию БД из config.ini"""
+    config = configparser.ConfigParser()
+    config_path = Path(__file__).parent / "config.ini"
+    
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    config.read(config_path)
+    
+    return {
+        'host': config['Database']['HOST'],
+        'database': config['Database']['DATABASE'],
+        'user': config['Database']['USER'],
+        'password': config['Database']['PASSWORD']
+    }
 
 def get_python_path():
     """Получаем путь к python из текущего окружения"""
@@ -26,7 +45,6 @@ def run_script(script_name):
     logging.info(f"Starting {script_name} with {python_path}")
     
     try:
-        # Используем subprocess вместо os.system для лучшего контроля
         result = subprocess.run(
             [python_path, script_path],
             check=True,
@@ -34,7 +52,6 @@ def run_script(script_name):
             text=True
         )
         
-        # Логируем вывод скрипта
         if result.stdout:
             logging.info(f"Output from {script_name}:\n{result.stdout}")
         if result.stderr:
@@ -57,19 +74,14 @@ def clear_tables():
     import psycopg2
     from psycopg2 import sql
     
-    db_config = {
-        'host': 'your_host',
-        'database': 'your_db',
-        'user': 'your_user',
-        'password': 'your_password'
-    }
-    
-    tables = ['table_visits', 'table_page_views', 'table_clients']
-    
     try:
+        db_config = get_db_config()
+        logging.info(f"Connecting to DB: {db_config['user']}@{db_config['host']}/{db_config['database']}")
+        
         conn = psycopg2.connect(**db_config)
         cursor = conn.cursor()
         
+        tables = ['table_visits', 'table_page_views', 'table_clients']
         for table in tables:
             logging.info(f"Clearing table cdm.{table}")
             cursor.execute(sql.SQL("TRUNCATE TABLE cdm.{} CASCADE").format(
@@ -89,20 +101,21 @@ def main():
     try:
         start_time = datetime.now()
         logging.info("=== Starting CDM tables update ===")
-        
-        # Очистка таблиц (опционально, раскомментируйте если нужно)
+        logging.info(f"Current date: {datetime.now().date()}")
+
+        # Очистка таблиц (раскомментируйте если нужно)
         # clear_tables()
-        
+
         # Запуск скриптов в правильном порядке
         scripts = [
             'update_table_clients.py',
             'update_table_page_views.py',
             'update_table_visits.py'
         ]
-        
+
         for script in scripts:
             run_script(script)
-            
+
         logging.info(f"=== CDM update completed in {datetime.now() - start_time} ===")
     except Exception as e:
         logging.critical(f"CDM update failed: {str(e)}")
