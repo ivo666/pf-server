@@ -17,7 +17,7 @@ def check_data():
         query = """
         SELECT 
             'table_clients' as table_name, 
-            MAX(date) as max_date, 
+            NULL as max_date,  -- В этой таблице нет даты
             COUNT(*) as total_rows 
         FROM cdm.table_clients
         UNION ALL
@@ -39,12 +39,12 @@ def check_data():
             'psql',
             '-h', 'localhost',
             '-U', 'postgres',
-            '-d', 'locserver',
+            '-d', 'pfserver',
             '-c', query
         ]
         
         # Добавляем пароль из переменной окружения
-        env = {'PGPASSWORD': 'BdfyjdDbrnjh'}
+        env = {'PGPASSWORD': 'pfserverivo'}
         
         result = subprocess.run(
             cmd,
