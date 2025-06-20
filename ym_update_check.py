@@ -1,6 +1,6 @@
-import subprocess
+import psycopg2
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Настройка логгирования
 logging.basicConfig(
@@ -11,51 +11,57 @@ logging.basicConfig(
     ]
 )
 
-def check_data():
+def check_source_data():
     try:
-        # Команда для выполнения в psql
-        query = """
-        SELECT 
-         'yandex_metrika_visits' as table, 
-         MAX(date) as max_date, 
-         COUNT(*) filter (WHERE date = CURRENT_DATE - INTERVAL '1 day') as yesterday_count
-       FROM yandex_metrika_visits
-       UNION ALL
-       SELECT 
-        'yandex_metrika_hits', 
-         MAX(date_time::date), 
-         COUNT(*) filter (WHERE date_time::date = CURRENT_DATE - INTERVAL '1 day')
-       FROM yandex_metrika_hits;
-        """
+        conn = psycopg2.connect(
+            host="localhost",
+            database="pfserver",
+            user="postgres",
+            password="pfserverivo"
+        )
+        cur = conn.cursor()
         
-        # Выполнение команды psql
-        cmd = [
-            'psql',
-            '-h', 'localhost',
-            '-U', 'postgres',
-            '-d', 'pfserver',
-            '-c', query
+        # Проверяем данные в исходных таблицах
+        queries = [
+            ("yandex_metrika_visits", "SELECT MAX(date), COUNT(*) FROM yandex_metrika_visits WHERE date = CURRENT_DATE - INTERVAL '1 day'"),
+            ("yandex_metrika_hits", "SELECT MAX(date_time::date), COUNT(*) FROM yandex_metrika_hits WHERE date_time::date = CURRENT_DATE - INTERVAL '1 day'")
         ]
         
-        # Добавляем пароль из переменной окружения
-        env = {'PGPASSWORD': 'pfserverivo'}
+        logging.info("Checking source data freshness:")
+        for table_name, query in queries:
+            cur.execute(query)
+            max_date, count = cur.fetchone()
+            logging.info(f"{table_name:25} | Max date: {max_date} | Yesterday's records: {count}")
+            
+        # Проверяем данные в CDM-таблицах
+        cdm_query = """
+        SELECT 
+            'table_visits' as table_name, 
+            MAX(visit_date) as max_date, 
+            COUNT(*) filter (WHERE visit_date = CURRENT_DATE - INTERVAL '1 day') as yesterday_count
+        FROM cdm.table_visits
+        UNION ALL
+        SELECT 
+            'table_page_views', 
+            MAX(hit_ts::date), 
+            COUNT(*) filter (WHERE hit_ts::date = CURRENT_DATE - INTERVAL '1 day')
+        FROM cdm.table_page_views;
+        """
         
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            env=env
-        )
-        
-        if result.returncode == 0:
-            logging.info("Data check results:\n" + result.stdout)
-        else:
-            logging.error("Error checking data:\n" + result.stderr)
+        cur.execute(cdm_query)
+        logging.info("\nCDM tables status:")
+        logging.info("{:<20} {:<15} {:<10}".format("Table", "Max Date", "Yesterday"))
+        logging.info("-" * 45)
+        for row in cur.fetchall():
+            logging.info("{:<20} {:<15} {:<10}".format(row[0], str(row[1]), row[2]))
             
     except Exception as e:
-        logging.error(f"Error in check_data: {str(e)}")
+        logging.error(f"Database error: {e}")
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 if __name__ == "__main__":
-    logging.info("Starting CDM data check")
-    check_data()
+    logging.info("Starting data freshness check")
+    check_source_data()
     logging.info("Check completed")
