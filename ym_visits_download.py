@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-Yandex Metrika Visits Daily Downloader - FIXED VERSION
+Yandex Metrika Visits Daily Downloader - FULL VERSION WITH ALL FIELDS
 """
 
 import os
 import sys
 import logging
 from datetime import datetime, timedelta
-from time import sleep
 import configparser
 import psycopg2
 from psycopg2.extras import execute_batch
 import pandas as pd
-from tapi_yandex_metrika import YandexMetrikaManagement
+from tapi_yandex_metrika import YandexMetrikaReports
 
 # Configure logging
 logging.basicConfig(
@@ -46,59 +45,91 @@ class YMVisitsDownloader:
         # Report date (yesterday)
         self.report_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # Fields to request from API
-        self.fields = [
-            'ym:s:clientID', 'ym:s:visitID', 'ym:s:watchIDs', 'ym:s:date', 'ym:s:dateTime',
-            'ym:s:isNewUser', 'ym:s:startURL', 'ym:s:endURL', 'ym:s:pageViews', 'ym:s:visitDuration',
-            'ym:s:regionCountry', 'ym:s:regionCity', 'ym:s:<attribution>TrafficSource',
-            'ym:s:<attribution>AdvEngine', 'ym:s:<attribution>ReferalSource',
-            'ym:s:<attribution>SearchEngineRoot', 'ym:s:<attribution>SearchEngine',
-            'ym:s:<attribution>SocialNetwork', 'ym:s:referer', 'ym:s:<attribution>DirectClickOrder',
-            'ym:s:<attribution>DirectBannerGroup', 'ym:s:<attribution>DirectClickBanner',
-            'ym:s:<attribution>DirectClickOrderName', 'ym:s:<attribution>ClickBannerGroupName',
-            'ym:s:<attribution>DirectClickBannerName', 'ym:s:<attribution>DirectPlatformType',
-            'ym:s:<attribution>DirectPlatform', 'ym:s:<attribution>DirectConditionType',
-            'ym:s:<attribution>UTMCampaign', 'ym:s:<attribution>UTMContent',
-            'ym:s:<attribution>UTMMedium', 'ym:s:<attribution>UTMSource', 'ym:s:<attribution>UTMTerm',
-            'ym:s:deviceCategory', 'ym:s:mobilePhone', 'ym:s:mobilePhoneModel', 'ym:s:browser',
-            'ym:s:screenFormat', 'ym:s:screenOrientation', 'ym:s:physicalScreenWidth',
-            'ym:s:physicalScreenHeight', 'ym:s:<attribution>Messenger',
-            'ym:s:<attribution>RecommendationSystem'
+        # Dimensions for the report (all fields from your table)
+        self.dimensions = [
+            'ym:s:clientID',
+            'ym:s:visitID',
+            'ym:s:watchIDs',
+            'ym:s:date',
+            'ym:s:dateTime',
+            'ym:s:isNewUser',
+            'ym:s:startURL',
+            'ym:s:endURL',
+            'ym:s:regionCountry',
+            'ym:s:regionCity',
+            'ym:s:trafficSource',
+            'ym:s:advEngine',
+            'ym:s:referalSource',
+            'ym:s:searchEngineRoot',
+            'ym:s:searchEngine',
+            'ym:s:socialNetwork',
+            'ym:s:referer',
+            'ym:s:directClickOrder',
+            'ym:s:directBannerGroup',
+            'ym:s:directClickBanner',
+            'ym:s:directClickOrderName',
+            'ym:s:clickBannerGroupName',
+            'ym:s:directClickBannerName',
+            'ym:s:directPlatformType',
+            'ym:s:directPlatform',
+            'ym:s:directConditionType',
+            'ym:s:UTMCampaign',
+            'ym:s:UTMContent',
+            'ym:s:UTMMedium',
+            'ym:s:UTMSource',
+            'ym:s:UTMTerm',
+            'ym:s:deviceCategory',
+            'ym:s:mobilePhone',
+            'ym:s:mobilePhoneModel',
+            'ym:s:browser',
+            'ym:s:screenFormat',
+            'ym:s:screenOrientation',
+            'ym:s:messenger',
+            'ym:s:recommendationSystem'
+        ]
+        
+        # Metrics for the report
+        self.metrics = [
+            'ym:s:pageViews',
+            'ym:s:visitDuration',
+            'ym:s:physicalScreenWidth',
+            'ym:s:physicalScreenHeight'
         ]
 
     def get_ym_client(self):
         """Initialize Yandex Metrika API client"""
         try:
-            client = YandexMetrikaManagement(
+            client = YandexMetrikaReports(
                 access_token=self.ym_token,
-                default_url_params={'counterId': self.counter_id}
+                default_url_params={'counter_id': self.counter_id}
             )
             return client
         except Exception as e:
             logger.error(f"Failed to initialize Yandex Metrika client: {str(e)}")
             raise
 
-    def get_visits_data(self, client):
-        """Get visits data from API"""
+    def get_visits_report(self, client):
+        """Get visits report from API"""
         try:
-            logger.info("Requesting visits data from API")
+            logger.info("Requesting visits report from API")
             
-            # Get visits data
-            data = client.stats().get(params={
+            report = client.stats().get(params={
+                'ids': self.counter_id,
                 'date1': self.report_date,
                 'date2': self.report_date,
-                'metrics': 'ym:s:visits',
-                'dimensions': ",".join(self.fields),
-                'limit': 100000  # Adjust based on your needs
+                'metrics': ",".join(self.metrics),
+                'dimensions': ",".join(self.dimensions),
+                'limit': 10000,
+                'accuracy': "full"
             })
             
-            return data().to_dicts()
+            return report().to_dicts()
         except Exception as e:
-            logger.error(f"Error getting visits data: {str(e)}")
+            logger.error(f"Error getting visits report: {str(e)}")
             raise
 
     def prepare_data(self, raw_data):
-        """Prepare data for database insertion (43 fields)"""
+        """Prepare data for database insertion (all 43 fields)"""
         prepared = []
         for row in raw_data:
             try:
@@ -119,27 +150,27 @@ class YMVisitsDownloader:
                     int(row.get('ym:s:visitDuration', 0)),
                     row.get('ym:s:regionCountry'),
                     row.get('ym:s:regionCity'),
-                    row.get('ym:s:<attribution>TrafficSource'),
-                    row.get('ym:s:<attribution>AdvEngine'),
-                    row.get('ym:s:<attribution>ReferalSource'),
-                    row.get('ym:s:<attribution>SearchEngineRoot'),
-                    row.get('ym:s:<attribution>SearchEngine'),
-                    row.get('ym:s:<attribution>SocialNetwork'),
+                    row.get('ym:s:trafficSource'),
+                    row.get('ym:s:advEngine'),
+                    row.get('ym:s:referalSource'),
+                    row.get('ym:s:searchEngineRoot'),
+                    row.get('ym:s:searchEngine'),
+                    row.get('ym:s:socialNetwork'),
                     row.get('ym:s:referer'),
-                    row.get('ym:s:<attribution>DirectClickOrder'),
-                    row.get('ym:s:<attribution>DirectBannerGroup'),
-                    row.get('ym:s:<attribution>DirectClickBanner'),
-                    row.get('ym:s:<attribution>DirectClickOrderName'),
-                    row.get('ym:s:<attribution>ClickBannerGroupName'),
-                    row.get('ym:s:<attribution>DirectClickBannerName'),
-                    row.get('ym:s:<attribution>DirectPlatformType'),
-                    row.get('ym:s:<attribution>DirectPlatform'),
-                    row.get('ym:s:<attribution>DirectConditionType'),
-                    row.get('ym:s:<attribution>UTMCampaign'),
-                    row.get('ym:s:<attribution>UTMContent'),
-                    row.get('ym:s:<attribution>UTMMedium'),
-                    row.get('ym:s:<attribution>UTMSource'),
-                    row.get('ym:s:<attribution>UTMTerm'),
+                    row.get('ym:s:directClickOrder'),
+                    row.get('ym:s:directBannerGroup'),
+                    row.get('ym:s:directClickBanner'),
+                    row.get('ym:s:directClickOrderName'),
+                    row.get('ym:s:clickBannerGroupName'),
+                    row.get('ym:s:directClickBannerName'),
+                    row.get('ym:s:directPlatformType'),
+                    row.get('ym:s:directPlatform'),
+                    row.get('ym:s:directConditionType'),
+                    row.get('ym:s:UTMCampaign'),
+                    row.get('ym:s:UTMContent'),
+                    row.get('ym:s:UTMMedium'),
+                    row.get('ym:s:UTMSource'),
+                    row.get('ym:s:UTMTerm'),
                     row.get('ym:s:deviceCategory'),
                     row.get('ym:s:mobilePhone'),
                     row.get('ym:s:mobilePhoneModel'),
@@ -148,8 +179,8 @@ class YMVisitsDownloader:
                     row.get('ym:s:screenOrientation'),
                     int(row.get('ym:s:physicalScreenWidth', 0)),
                     int(row.get('ym:s:physicalScreenHeight', 0)),
-                    row.get('ym:s:<attribution>Messenger'),
-                    row.get('ym:s:<attribution>RecommendationSystem')
+                    row.get('ym:s:messenger'),
+                    row.get('ym:s:recommendationSystem')
                 ))
             except Exception as e:
                 logger.error(f"Error processing data row: {str(e)}")
@@ -157,14 +188,9 @@ class YMVisitsDownloader:
         return prepared
 
     def load_data_to_db(self, data):
-        """Load data to PostgreSQL (44 fields including loaded_at)"""
+        """Load data to PostgreSQL (all 44 fields including loaded_at)"""
         if not data:
             logger.warning("No data to load")
-            return False
-
-        # Verify data structure
-        if len(data[0]) != 43:
-            logger.error(f"Data structure mismatch: expected 43 fields, got {len(data[0])}")
             return False
 
         conn = None
@@ -214,8 +240,8 @@ class YMVisitsDownloader:
             # Initialize API client
             ym_client = self.get_ym_client()
             
-            # Get visits data
-            raw_data = self.get_visits_data(ym_client)
+            # Get visits report
+            raw_data = self.get_visits_report(ym_client)
             
             if not raw_data:
                 logger.warning("No data received from API")
