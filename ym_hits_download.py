@@ -2,6 +2,7 @@
 """
 Yandex Metrika Hits Daily Downloader
 Загружает данные хитов за вчерашний день в таблицу row.yandex_metrika_hits
+с проверкой дубликатов по watch_id
 """
 
 import os
@@ -76,22 +77,57 @@ class YMHitsDownloader:
                 raise Exception(f"Ошибка обработки отчета. Статус: {status}")
 
     def load_data_to_db(self, data):
-        """Загрузка данных в PostgreSQL"""
-        conn = psycopg2.connect(**self.db_params)
+        """Загрузка данных в PostgreSQL с проверкой дубликатов"""
+        if not data:
+            logger.warning("Нет данных для загрузки")
+            return False
+
+        conn = None
         try:
+            conn = psycopg2.connect(**self.db_params)
             with conn.cursor() as cur:
-                execute_batch(cur, """
-                    INSERT INTO row.yandex_metrika_hits (
+                # Создаем временную таблицу для новых данных
+                cur.execute("""
+                    CREATE TEMP TABLE temp_hits_data (
+                        LIKE row.yandex_metrika_hits
+                    ) ON COMMIT DROP
+                """)
+                
+                # Вставляем данные во временную таблицу
+                sql_temp = """
+                    INSERT INTO temp_hits_data (
                         watch_id, client_id, date_time,
                         title, url, is_page_view
                     ) VALUES (
                         %s, %s, %s,
                         %s, %s, %s
                     )
-                """, data)
+                """
+                execute_batch(cur, sql_temp, data)
+                
+                # Вставляем только новые данные, которых нет в основной таблице
+                sql_final = """
+                    INSERT INTO row.yandex_metrika_hits
+                    SELECT * FROM temp_hits_data t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM row.yandex_metrika_hits m
+                        WHERE m.watch_id = t.watch_id
+                    )
+                """
+                cur.execute(sql_final)
+                inserted_count = cur.rowcount
+                
             conn.commit()
+            logger.info(f"Успешно загружено {inserted_count} новых записей (пропущено {len(data) - inserted_count} дубликатов)")
+            return True
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Ошибка при загрузке данных в БД: {str(e)}")
+            return False
         finally:
-            conn.close()
+            if conn:
+                conn.close()
 
     def run(self):
         """Основной процесс выгрузки"""
@@ -143,8 +179,9 @@ class YMHitsDownloader:
             
             # Загрузка в БД
             if prepared_data:
-                self.load_data_to_db(prepared_data)
-                logger.info(f"Успешно загружено {len(prepared_data)} записей")
+                success = self.load_data_to_db(prepared_data)
+                if not success:
+                    return False
             else:
                 logger.warning("Нет данных для загрузки")
             
