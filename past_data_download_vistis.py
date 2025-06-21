@@ -1,3 +1,4 @@
+
 from datetime import datetime, timedelta
 from tapi_yandex_metrika import YandexMetrikaLogsapi
 import pandas as pd
@@ -303,7 +304,7 @@ def main():
         )
 
         # Получаем диапазоны дат по неделям
-        week_ranges = get_week_ranges("2025-03-16", "2025-03-31")
+        week_ranges = get_week_ranges("2025-06-01", "2025-06-14")
         
         # Подключение к БД
         conn = create_connection()

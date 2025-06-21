@@ -90,7 +90,7 @@ def create_table(conn):
     """Создает таблицу для хранения hits с watchID в качестве ключа"""
     with conn.cursor() as cursor:
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS yandex_metrika_pageviews (
+        CREATE TABLE IF NOT EXISTS yandex_metrika_hits (
             watch_id TEXT PRIMARY KEY,
             client_id TEXT,
             date_time TIMESTAMP,
@@ -116,7 +116,7 @@ def insert_data(conn, df):
             ))
 
         execute_batch(cursor, """
-            INSERT INTO yandex_metrika_pageviews (
+            INSERT INTO yandex_metrika_hits (
                 watch_id, client_id, date_time,
                 title, url, is_page_view
             ) VALUES (
@@ -185,7 +185,7 @@ def main():
         )
 
         # Получаем диапазоны дат по неделям
-        week_ranges = get_week_ranges("2024-01-01", "2025-05-31")
+        week_ranges = get_week_ranges("2025-06-15", "2025-06-16")
         
         # Подключение к БД
         conn = create_connection()

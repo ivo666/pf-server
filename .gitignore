@@ -63,3 +63,6 @@ data/temp/
 # Исключения для специфичных файлов проекта
 /pf_event/
 /downloads/
+config.ini
+.env
+*.log
