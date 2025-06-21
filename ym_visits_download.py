@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Yandex Metrika Visits Daily Downloader - FINAL FIXED VERSION
+Yandex Metrika Visits Daily Downloader - FIXED VERSION
 """
 
 import os
@@ -12,7 +12,7 @@ import configparser
 import psycopg2
 from psycopg2.extras import execute_batch
 import pandas as pd
-from tapi_yandex_metrika import YandexMetrikaLogsapi
+from tapi_yandex_metrika import YandexMetrikaManagement
 
 # Configure logging
 logging.basicConfig(
@@ -69,37 +69,33 @@ class YMVisitsDownloader:
     def get_ym_client(self):
         """Initialize Yandex Metrika API client"""
         try:
-            client = YandexMetrikaLogsapi(
+            client = YandexMetrikaManagement(
                 access_token=self.ym_token,
                 default_url_params={'counterId': self.counter_id}
             )
-            # Test connection
-            client.logs().get(params={"date1": self.report_date, "date2": self.report_date})
             return client
         except Exception as e:
             logger.error(f"Failed to initialize Yandex Metrika client: {str(e)}")
             raise
 
-    def wait_for_report(self, client, request_id, max_attempts=20):
-        """Wait for report processing to complete"""
-        attempt = 0
-        while attempt < max_attempts:
-            try:
-                info = client.info(requestId=request_id).get()
-                status = info["log_request"]["status"]
-                
-                if status == "processed":
-                    return info
-                elif status in ("created", "pending"):
-                    logger.info(f"Report processing, status: {status}. Waiting...")
-                    sleep(30)
-                    attempt += 1
-                else:
-                    raise Exception(f"Report processing failed. Status: {status}")
-            except Exception as e:
-                logger.error(f"Error checking report status: {str(e)}")
-                raise
-        raise Exception("Max attempts reached while waiting for report")
+    def get_visits_data(self, client):
+        """Get visits data from API"""
+        try:
+            logger.info("Requesting visits data from API")
+            
+            # Get visits data
+            data = client.stats().get(params={
+                'date1': self.report_date,
+                'date2': self.report_date,
+                'metrics': 'ym:s:visits',
+                'dimensions': ",".join(self.fields),
+                'limit': 100000  # Adjust based on your needs
+            })
+            
+            return data().to_dicts()
+        except Exception as e:
+            logger.error(f"Error getting visits data: {str(e)}")
+            raise
 
     def prepare_data(self, raw_data):
         """Prepare data for database insertion (43 fields)"""
@@ -107,7 +103,7 @@ class YMVisitsDownloader:
         for row in raw_data:
             try:
                 watch_ids = []
-                if isinstance(row['ym:s:watchIDs'], str):
+                if isinstance(row.get('ym:s:watchIDs'), str):
                     watch_ids = [x.strip(' "\'') for x in row['ym:s:watchIDs'].strip('[]').split(',') if x.strip()]
                 
                 prepared.append((
@@ -154,7 +150,6 @@ class YMVisitsDownloader:
                     int(row.get('ym:s:physicalScreenHeight', 0)),
                     row.get('ym:s:<attribution>Messenger'),
                     row.get('ym:s:<attribution>RecommendationSystem')
-                    # loaded_at will be set automatically by DEFAULT
                 ))
             except Exception as e:
                 logger.error(f"Error processing data row: {str(e)}")
@@ -219,32 +214,15 @@ class YMVisitsDownloader:
             # Initialize API client
             ym_client = self.get_ym_client()
             
-            # Create API request
-            params = {
-                "fields": ",".join(self.fields),
-                "source": "visits",
-                "date1": self.report_date,
-                "date2": self.report_date
-            }
+            # Get visits data
+            raw_data = self.get_visits_data(ym_client)
             
-            request = ym_client.create().post(params=params)
-            request_id = request["log_request"]["request_id"]
-            logger.info(f"Request created, ID: {request_id}")
-            
-            # Wait for report processing
-            report_info = self.wait_for_report(ym_client, request_id)
-            parts_count = len(report_info["log_request"]["parts"])
-            logger.info(f"Report processed, parts: {parts_count}")
-            
-            # Download and process data
-            all_data = []
-            for part_number in range(parts_count):
-                logger.info(f"Processing part {part_number + 1}/{parts_count}")
-                part_data = ym_client.download(requestId=request_id, partNumber=part_number).get()().to_dicts()
-                all_data.extend(part_data)
-            
+            if not raw_data:
+                logger.warning("No data received from API")
+                return False
+                
             # Prepare data for database
-            prepared_data = self.prepare_data(all_data)
+            prepared_data = self.prepare_data(raw_data)
             
             if not prepared_data:
                 logger.warning("No valid data to load")
