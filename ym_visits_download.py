@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Yandex Metrika Visits Daily Downloader - FINAL PRODUCTION VERSION
+Yandex Metrika Visits Daily Downloader - WITH DUPLICATE HANDLING
 """
 
 import os
@@ -65,27 +65,6 @@ class YMVisitsDownloader:
             'ym:s:physicalScreenHeight', 'ym:s:<attribution>Messenger',
             'ym:s:<attribution>RecommendationSystem'
         ]
-
-    def check_existing_data(self):
-        """Check if data for report_date already exists"""
-        try:
-            conn = psycopg2.connect(**self.db_params)
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT COUNT(*) 
-                    FROM row.yandex_metrika_visits 
-                    WHERE date = %s
-                """, (self.report_date,))
-                count = cur.fetchone()[0]
-                if count > 0:
-                    logger.warning(f"Data for {self.report_date} already exists ({count} records)")
-                return count
-        except Exception as e:
-            logger.error(f"Error checking existing data: {str(e)}")
-            return -1
-        finally:
-            if conn:
-                conn.close()
 
     def get_ym_client(self):
         """Initialize Yandex Metrika Logs API client"""
@@ -189,7 +168,7 @@ class YMVisitsDownloader:
         return prepared
 
     def load_data_to_db(self, data):
-        """Load data to PostgreSQL (43 parameters)"""
+        """Load data to PostgreSQL with duplicate handling"""
         if not data:
             logger.warning("No data to load")
             return False
@@ -198,8 +177,16 @@ class YMVisitsDownloader:
         try:
             conn = psycopg2.connect(**self.db_params)
             with conn.cursor() as cur:
-                sql = """
-                    INSERT INTO row.yandex_metrika_visits (
+                # Создаем временную таблицу для новых данных
+                cur.execute("""
+                    CREATE TEMP TABLE temp_visits_data (
+                        LIKE row.yandex_metrika_visits
+                    ) ON COMMIT DROP
+                """)
+                
+                # Вставляем данные во временную таблицу
+                sql_temp = """
+                    INSERT INTO temp_visits_data (
                         client_id, visit_id, watch_ids, date, date_time, is_new_user,
                         start_url, end_url, page_views, visit_duration, region_country,
                         region_city, traffic_source, adv_engine, referal_source,
@@ -218,15 +205,23 @@ class YMVisitsDownloader:
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s
                     )
-                    ON CONFLICT (visit_id) DO NOTHING
                 """
-                if len(data[0]) != 43:
-                    logger.error(f"Data structure mismatch: expected 43 fields, got {len(data[0])}")
-                    return False
+                execute_batch(cur, sql_temp, data)
                 
-                execute_batch(cur, sql, data)
+                # Вставляем только новые данные, которых нет в основной таблице
+                sql_final = """
+                    INSERT INTO row.yandex_metrika_visits
+                    SELECT * FROM temp_visits_data t
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM row.yandex_metrika_visits m
+                        WHERE m.visit_id = t.visit_id
+                    )
+                """
+                cur.execute(sql_final)
+                inserted_count = cur.rowcount
+                
             conn.commit()
-            logger.info(f"Successfully loaded {len(data)} records")
+            logger.info(f"Successfully loaded {inserted_count} new records (skipped {len(data) - inserted_count} duplicates)")
             return True
         except Exception as e:
             if conn:
@@ -242,14 +237,6 @@ class YMVisitsDownloader:
         logger.info(f"Starting Yandex Metrika visits download for {self.report_date}")
         
         try:
-            # Check if data already exists
-            existing_count = self.check_existing_data()
-            if existing_count > 0:
-                logger.info(f"Found {existing_count} existing records for {self.report_date}")
-                # Можно раскомментировать для пропуска существующих данных
-                # logger.info("Skipping existing date")
-                # return True
-            
             # Initialize API client
             ym_client = self.get_ym_client()
             
