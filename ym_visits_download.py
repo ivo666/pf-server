@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Yandex Metrika Visits Daily Downloader - FULL WORKING VERSION WITH WATCH_IDS
+Yandex Metrika Visits Daily Downloader - FINAL WORKING VERSION
 """
 
 import os
@@ -109,7 +109,7 @@ class YMVisitsDownloader:
         return all_data
 
     def prepare_data(self, raw_data):
-        """Prepare data for database insertion"""
+        """Prepare data for database insertion (43 fields)"""
         prepared = []
         for row in raw_data:
             try:
@@ -168,7 +168,7 @@ class YMVisitsDownloader:
         return prepared
 
     def load_data_to_db(self, data):
-        """Load data to PostgreSQL"""
+        """Load data to PostgreSQL (44 fields including loaded_at)"""
         if not data:
             logger.warning("No data to load")
             return False
@@ -200,6 +200,11 @@ class YMVisitsDownloader:
                     )
                     ON CONFLICT (visit_id) DO NOTHING
                 """
+                # Verify data structure before insertion
+                if len(data[0]) != 43:  # 43 fields + DEFAULT for loaded_at
+                    logger.error(f"Data structure mismatch: expected 43 fields, got {len(data[0])}")
+                    return False
+                
                 execute_batch(cur, sql, data)
             conn.commit()
             logger.info(f"Successfully loaded {len(data)} records")
