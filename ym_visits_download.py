@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Yandex Metrika Visits Daily Downloader - COMPLETE SOLUTION
-- Creates table with all 44 parameters
-- Downloads data from Yandex Metrika
-- Inserts data into PostgreSQL
+Yandex Metrika Visits Daily Downloader - FINAL VERSION WITHOUT loaded_at
 """
 
 import os
@@ -70,7 +67,7 @@ class YMVisitsDownloader:
         ]
 
     def create_table(self):
-        """Create table with all 44 parameters if not exists"""
+        """Create table with all 43 parameters"""
         conn = None
         try:
             conn = psycopg2.connect(**self.db_params)
@@ -119,12 +116,11 @@ class YMVisitsDownloader:
                         physical_screen_width INTEGER,
                         physical_screen_height INTEGER,
                         messenger TEXT,
-                        recommendation_system TEXT,
-                        loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        recommendation_system TEXT
                     )
                 """)
                 conn.commit()
-                logger.info("Table created successfully")
+                logger.info("Table created successfully with 43 parameters")
                 return True
         except Exception as e:
             if conn:
@@ -237,7 +233,7 @@ class YMVisitsDownloader:
         return prepared
 
     def load_data_to_db(self, data):
-        """Load data to PostgreSQL (44 fields including loaded_at)"""
+        """Load data to PostgreSQL (43 parameters)"""
         if not data:
             logger.warning("No data to load")
             return False
@@ -258,19 +254,18 @@ class YMVisitsDownloader:
                         utm_campaign, utm_content, utm_medium, utm_source, utm_term,
                         device_category, mobile_phone, mobile_phone_model, browser,
                         screen_format, screen_orientation, physical_screen_width,
-                        physical_screen_height, messenger, recommendation_system,
-                        loaded_at
+                        physical_screen_height, messenger, recommendation_system
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, DEFAULT
+                        %s, %s, %s
                     )
                     ON CONFLICT (visit_id) DO NOTHING
                 """
                 # Verify data structure before insertion
-                if len(data[0]) != 43:  # 43 fields + DEFAULT for loaded_at
+                if len(data[0]) != 43:
                     logger.error(f"Data structure mismatch: expected 43 fields, got {len(data[0])}")
                     return False
                 
