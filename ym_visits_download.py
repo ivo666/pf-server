@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Yandex Metrika Visits Daily Downloader - FULL VERSION WITH ALL FIELDS
+Yandex Metrika Visits Daily Downloader - FINAL WORKING VERSION
 """
 
 import os
@@ -11,7 +11,7 @@ import configparser
 import psycopg2
 from psycopg2.extras import execute_batch
 import pandas as pd
-from tapi_yandex_metrika import YandexMetrikaReports
+from tapi_yandex_metrika import YandexMetrikaStats
 
 # Configure logging
 logging.basicConfig(
@@ -99,7 +99,7 @@ class YMVisitsDownloader:
     def get_ym_client(self):
         """Initialize Yandex Metrika API client"""
         try:
-            client = YandexMetrikaReports(
+            client = YandexMetrikaStats(
                 access_token=self.ym_token,
                 default_url_params={'counter_id': self.counter_id}
             )
