@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Yandex Metrika Visits Daily Downloader
-Загружает данные визитов за вчерашний день в таблицу row.yandex_metrika_visits
+Yandex Metrika Visits Daily Downloader - FIXED VERSION
 """
 
 import os
@@ -15,7 +14,6 @@ from psycopg2.extras import execute_batch
 import pandas as pd
 from tapi_yandex_metrika import YandexMetrikaLogsapi
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -28,11 +26,9 @@ logger = logging.getLogger(__name__)
 
 class YMVisitsDownloader:
     def __init__(self):
-        # Загрузка конфигурации
         self.config = configparser.ConfigParser()
         self.config.read('/home/pf-server/config.ini')
         
-        # Параметры подключения
         self.db_params = {
             'host': self.config['Database']['HOST'],
             'database': self.config['Database']['DATABASE'],
@@ -40,14 +36,10 @@ class YMVisitsDownloader:
             'password': self.config['Database']['PASSWORD']
         }
         
-        # Параметры API
         self.ym_token = self.config['YandexMetrika']['ACCESS_TOKEN']
         self.counter_id = self.config['YandexMetrika']['COUNTER_ID']
-        
-        # Дата за которую выгружаем данные (вчера)
         self.report_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # Поля для выгрузки (полный список из оригинального run.py)
         self.fields = [
             'ym:s:clientID', 'ym:s:visitID', 'ym:s:watchIDs', 'ym:s:date', 'ym:s:dateTime',
             'ym:s:isNewUser', 'ym:s:startURL', 'ym:s:endURL', 'ym:s:pageViews', 'ym:s:visitDuration',
@@ -68,14 +60,12 @@ class YMVisitsDownloader:
         ]
 
     def get_ym_client(self):
-        """Инициализация клиента Яндекс.Метрики"""
         return YandexMetrikaLogsapi(
             access_token=self.ym_token,
             default_url_params={'counterId': self.counter_id}
         )
 
     def wait_for_report(self, client, request_id):
-        """Ожидание готовности отчета"""
         while True:
             status = client.info(requestId=request_id).get()["log_request"]["status"]
             if status == "processed":
@@ -84,6 +74,61 @@ class YMVisitsDownloader:
                 sleep(30)
             else:
                 raise Exception(f"Ошибка обработки отчета. Статус: {status}")
+
+    def prepare_data(self, raw_data):
+        """Подготовка данных для вставки"""
+        prepared = []
+        for row in raw_data:
+            watch_ids = []
+            if isinstance(row['ym:s:watchIDs'], str):
+                watch_ids = [x.strip(' "\'') for x in row['ym:s:watchIDs'].strip('[]').split(',') if x.strip()]
+            
+            prepared.append((
+                row.get('ym:s:clientID'),
+                row.get('ym:s:visitID'),
+                watch_ids or None,
+                row.get('ym:s:date'),
+                pd.to_datetime(row.get('ym:s:dateTime')),
+                str(row.get('ym:s:isNewUser', '')),
+                row.get('ym:s:startURL'),
+                row.get('ym:s:endURL'),
+                int(row.get('ym:s:pageViews', 0)),
+                int(row.get('ym:s:visitDuration', 0)),
+                row.get('ym:s:regionCountry'),
+                row.get('ym:s:regionCity'),
+                row.get('ym:s:<attribution>TrafficSource'),
+                row.get('ym:s:<attribution>AdvEngine'),
+                row.get('ym:s:<attribution>ReferalSource'),
+                row.get('ym:s:<attribution>SearchEngineRoot'),
+                row.get('ym:s:<attribution>SearchEngine'),
+                row.get('ym:s:<attribution>SocialNetwork'),
+                row.get('ym:s:referer'),
+                row.get('ym:s:<attribution>DirectClickOrder'),
+                row.get('ym:s:<attribution>DirectBannerGroup'),
+                row.get('ym:s:<attribution>DirectClickBanner'),
+                row.get('ym:s:<attribution>DirectClickOrderName'),
+                row.get('ym:s:<attribution>ClickBannerGroupName'),
+                row.get('ym:s:<attribution>DirectClickBannerName'),
+                row.get('ym:s:<attribution>DirectPlatformType'),
+                row.get('ym:s:<attribution>DirectPlatform'),
+                row.get('ym:s:<attribution>DirectConditionType'),
+                row.get('ym:s:<attribution>UTMCampaign'),
+                row.get('ym:s:<attribution>UTMContent'),
+                row.get('ym:s:<attribution>UTMMedium'),
+                row.get('ym:s:<attribution>UTMSource'),
+                row.get('ym:s:<attribution>UTMTerm'),
+                row.get('ym:s:deviceCategory'),
+                row.get('ym:s:mobilePhone'),
+                row.get('ym:s:mobilePhoneModel'),
+                row.get('ym:s:browser'),
+                row.get('ym:s:screenFormat'),
+                row.get('ym:s:screenOrientation'),
+                int(row.get('ym:s:physicalScreenWidth', 0)),
+                int(row.get('ym:s:physicalScreenHeight', 0)),
+                row.get('ym:s:<attribution>Messenger'),
+                row.get('ym:s:<attribution>RecommendationSystem')
+            ))
+        return prepared
 
     def load_data_to_db(self, data):
         """Загрузка данных в PostgreSQL"""
@@ -112,6 +157,12 @@ class YMVisitsDownloader:
                     )
                 """, data)
             conn.commit()
+            logger.info(f"Успешно загружено {len(data)} записей")
+            return True
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Ошибка при загрузке в БД: {str(e)}")
+            return False
         finally:
             conn.close()
 
@@ -120,10 +171,8 @@ class YMVisitsDownloader:
         logger.info(f"Начало выгрузки данных визитов за {self.report_date}")
         
         try:
-            # Инициализация клиента API
             ym_client = self.get_ym_client()
             
-            # Создание запроса
             params = {
                 "fields": ",".join(self.fields),
                 "source": "visits",
@@ -131,87 +180,29 @@ class YMVisitsDownloader:
                 "date2": self.report_date
             }
             
-            # Отправка запроса
             request = ym_client.create().post(params=params)
             request_id = request["log_request"]["request_id"]
             logger.info(f"Запрос создан, ID: {request_id}")
             
-            # Ожидание обработки
             self.wait_for_report(ym_client, request_id)
             
-            # Получение информации о частях отчета
             report_info = ym_client.info(requestId=request_id).get()
             parts_count = len(report_info["log_request"]["parts"])
             logger.info(f"Отчет готов. Частей: {parts_count}")
             
-            # Загрузка и обработка данных
             all_data = []
             for part_number in range(parts_count):
                 logger.info(f"Обработка части {part_number + 1}/{parts_count}")
                 part_data = ym_client.download(requestId=request_id, partNumber=part_number).get()().to_dicts()
                 all_data.extend(part_data)
             
-            # Подготовка данных для вставки
-            prepared_data = []
-            for row in all_data:
-                watch_ids = []
-                if isinstance(row['ym:s:watchIDs'], str):
-                    watch_ids = [x.strip(' "\'') for x in row['ym:s:watchIDs'].strip('[]').split(',') if x.strip()]
-                
-                prepared_data.append((
-                    row.get('ym:s:clientID'),
-                    row.get('ym:s:visitID'),
-                    watch_ids or None,
-                    row.get('ym:s:date'),
-                    pd.to_datetime(row.get('ym:s:dateTime')),
-                    str(row.get('ym:s:isNewUser', '')),
-                    row.get('ym:s:startURL'),
-                    row.get('ym:s:endURL'),
-                    int(row.get('ym:s:pageViews', 0)),
-                    int(row.get('ym:s:visitDuration', 0)),
-                    row.get('ym:s:regionCountry'),
-                    row.get('ym:s:regionCity'),
-                    row.get('ym:s:<attribution>TrafficSource'),
-                    row.get('ym:s:<attribution>AdvEngine'),
-                    row.get('ym:s:<attribution>ReferalSource'),
-                    row.get('ym:s:<attribution>SearchEngineRoot'),
-                    row.get('ym:s:<attribution>SearchEngine'),
-                    row.get('ym:s:<attribution>SocialNetwork'),
-                    row.get('ym:s:referer'),
-                    row.get('ym:s:<attribution>DirectClickOrder'),
-                    row.get('ym:s:<attribution>DirectBannerGroup'),
-                    row.get('ym:s:<attribution>DirectClickBanner'),
-                    row.get('ym:s:<attribution>DirectClickOrderName'),
-                    row.get('ym:s:<attribution>ClickBannerGroupName'),
-                    row.get('ym:s:<attribution>DirectClickBannerName'),
-                    row.get('ym:s:<attribution>DirectPlatformType'),
-                    row.get('ym:s:<attribution>DirectPlatform'),
-                    row.get('ym:s:<attribution>DirectConditionType'),
-                    row.get('ym:s:<attribution>UTMCampaign'),
-                    row.get('ym:s:<attribution>UTMContent'),
-                    row.get('ym:s:<attribution>UTMMedium'),
-                    row.get('ym:s:<attribution>UTMSource'),
-                    row.get('ym:s:<attribution>UTMTerm'),
-                    row.get('ym:s:deviceCategory'),
-                    row.get('ym:s:mobilePhone'),
-                    row.get('ym:s:mobilePhoneModel'),
-                    row.get('ym:s:browser'),
-                    row.get('ym:s:screenFormat'),
-                    row.get('ym:s:screenOrientation'),
-                    int(row.get('ym:s:physicalScreenWidth', 0)),
-                    int(row.get('ym:s:physicalScreenHeight', 0)),
-                    row.get('ym:s:<attribution>Messenger'),
-                    row.get('ym:s:<attribution>RecommendationSystem')
-                ))
+            prepared_data = self.prepare_data(all_data)
             
-            # Загрузка в БД
-            if prepared_data:
-                self.load_data_to_db(prepared_data)
-                logger.info(f"Успешно загружено {len(prepared_data)} записей")
-            else:
+            if not prepared_data:
                 logger.warning("Нет данных для загрузки")
-            
-            return True
+                return False
+                
+            return self.load_data_to_db(prepared_data)
             
         except Exception as e:
             logger.error(f"Ошибка при выгрузке данных: {str(e)}")
