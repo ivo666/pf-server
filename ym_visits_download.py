@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Yandex Metrika Visits Daily Downloader - FINAL VERSION WITHOUT loaded_at
+Yandex Metrika Visits Daily Downloader - FINAL PRODUCTION VERSION
 """
 
 import os
@@ -66,67 +66,23 @@ class YMVisitsDownloader:
             'ym:s:<attribution>RecommendationSystem'
         ]
 
-    def create_table(self):
-        """Create table with all 43 parameters"""
-        conn = None
+    def check_existing_data(self):
+        """Check if data for report_date already exists"""
         try:
             conn = psycopg2.connect(**self.db_params)
             with conn.cursor() as cur:
                 cur.execute("""
-                    CREATE TABLE IF NOT EXISTS row.yandex_metrika_visits (
-                        client_id TEXT,
-                        visit_id TEXT PRIMARY KEY,
-                        watch_ids TEXT[],
-                        date DATE,
-                        date_time TIMESTAMP,
-                        is_new_user TEXT,
-                        start_url TEXT,
-                        end_url TEXT,
-                        page_views INTEGER,
-                        visit_duration INTEGER,
-                        region_country TEXT,
-                        region_city TEXT,
-                        traffic_source TEXT,
-                        adv_engine TEXT,
-                        referal_source TEXT,
-                        search_engine_root TEXT,
-                        search_engine TEXT,
-                        social_network TEXT,
-                        referer TEXT,
-                        direct_click_order TEXT,
-                        direct_banner_group TEXT,
-                        direct_click_banner TEXT,
-                        direct_click_order_name TEXT,
-                        click_banner_group_name TEXT,
-                        direct_click_banner_name TEXT,
-                        direct_platform_type TEXT,
-                        direct_platform TEXT,
-                        direct_condition_type TEXT,
-                        utm_campaign TEXT,
-                        utm_content TEXT,
-                        utm_medium TEXT,
-                        utm_source TEXT,
-                        utm_term TEXT,
-                        device_category TEXT,
-                        mobile_phone TEXT,
-                        mobile_phone_model TEXT,
-                        browser TEXT,
-                        screen_format TEXT,
-                        screen_orientation TEXT,
-                        physical_screen_width INTEGER,
-                        physical_screen_height INTEGER,
-                        messenger TEXT,
-                        recommendation_system TEXT
-                    )
-                """)
-                conn.commit()
-                logger.info("Table created successfully with 43 parameters")
-                return True
+                    SELECT COUNT(*) 
+                    FROM row.yandex_metrika_visits 
+                    WHERE date = %s
+                """, (self.report_date,))
+                count = cur.fetchone()[0]
+                if count > 0:
+                    logger.warning(f"Data for {self.report_date} already exists ({count} records)")
+                return count
         except Exception as e:
-            if conn:
-                conn.rollback()
-            logger.error(f"Error creating table: {str(e)}")
-            return False
+            logger.error(f"Error checking existing data: {str(e)}")
+            return -1
         finally:
             if conn:
                 conn.close()
@@ -264,7 +220,6 @@ class YMVisitsDownloader:
                     )
                     ON CONFLICT (visit_id) DO NOTHING
                 """
-                # Verify data structure before insertion
                 if len(data[0]) != 43:
                     logger.error(f"Data structure mismatch: expected 43 fields, got {len(data[0])}")
                     return False
@@ -287,10 +242,13 @@ class YMVisitsDownloader:
         logger.info(f"Starting Yandex Metrika visits download for {self.report_date}")
         
         try:
-            # First create the table
-            if not self.create_table():
-                logger.error("Failed to create table")
-                return False
+            # Check if data already exists
+            existing_count = self.check_existing_data()
+            if existing_count > 0:
+                logger.info(f"Found {existing_count} existing records for {self.report_date}")
+                # Можно раскомментировать для пропуска существующих данных
+                # logger.info("Skipping existing date")
+                # return True
             
             # Initialize API client
             ym_client = self.get_ym_client()
