@@ -174,14 +174,14 @@ class YMVisitsDownloader:
         try:
             conn = psycopg2.connect(**self.db_params)
             with conn.cursor() as cur:
-                # Создаем временную таблицу для новых данных
+                # Create temp table for new data
                 cur.execute("""
                     CREATE TEMP TABLE temp_visits_data (
                         LIKE row.yandex_metrika_visits
                     ) ON COMMIT DROP
                 """)
                 
-                # Вставляем данные во временную таблицу
+                # Insert data into temp table
                 sql_temp = """
                     INSERT INTO temp_visits_data (
                         client_id, visit_id, watch_ids, date, date_time, is_new_user,
@@ -205,7 +205,7 @@ class YMVisitsDownloader:
                 """
                 execute_batch(cur, sql_temp, data)
                 
-                # Вставляем только новые данные, которых нет в основной таблице
+                # Insert only new data that doesn't exist in main table
                 sql_final = """
                     INSERT INTO row.yandex_metrika_visits
                     SELECT * FROM temp_visits_data t
@@ -232,10 +232,15 @@ class YMVisitsDownloader:
     def get_weekly_periods(self, start_date, end_date=None):
         """Generate weekly periods from start_date to end_date"""
         if end_date is None:
-            end_date = datetime.now().strftime('%Y-%m-%d')
+            # Use yesterday as end date to avoid future dates
+            end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
         start = datetime.strptime(start_date, '%Y-%m-%d')
         end = datetime.strptime(end_date, '%Y-%m-%d')
+        
+        # If start date is in future, return empty list
+        if start > end:
+            return []
         
         current = start
         periods = []
@@ -257,6 +262,12 @@ class YMVisitsDownloader:
     def process_period(self, ym_client, date1, date2):
         """Process data for a specific period"""
         try:
+            # Check if date2 is today or in future
+            today = datetime.now().strftime('%Y-%m-%d')
+            if date2 >= today:
+                date2 = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+                logger.info(f"Adjusted date range to {date1}-{date2} to avoid future dates")
+            
             logger.info(f"Processing period {date1} to {date2}")
             
             # Create API request
@@ -305,6 +316,10 @@ class YMVisitsDownloader:
             periods = self.get_weekly_periods(start_date)
             logger.info(f"Total periods to process: {len(periods)}")
             
+            if not periods:
+                logger.warning("No valid periods to process (start date may be in future)")
+                return False
+            
             # Process each period
             for i, (date1, date2) in enumerate(periods, 1):
                 logger.info(f"Processing period {i}/{len(periods)}: {date1} - {date2}")
@@ -327,10 +342,6 @@ class YMVisitsDownloader:
 if __name__ == "__main__":
     downloader = YMVisitsDownloader()
     
-    # Для ежедневной выгрузки (как в оригинале)
-    # if not downloader.run():
-    #     sys.exit(1)
-    
-    # Для исторической выгрузки
-    if not downloader.run_historical(start_date='2024-01-01'):
+    # For historical download
+    if not downloader.run_historical(start_date='2025-06-14'):
         sys.exit(1)
