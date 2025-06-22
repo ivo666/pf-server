@@ -143,10 +143,15 @@ class YMHitsDownloader:
     def get_weekly_periods(self, start_date, end_date=None):
         """Генерация недельных периодов"""
         if end_date is None:
-            end_date = datetime.now().strftime('%Y-%m-%d')
+            # Используем вчерашний день как конечную дату
+            end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
         start = datetime.strptime(start_date, '%Y-%m-%d')
         end = datetime.strptime(end_date, '%Y-%m-%d')
+        
+        # Если начальная дата в будущем - возвращаем пустой список
+        if start > end:
+            return []
         
         current = start
         periods = []
@@ -168,6 +173,12 @@ class YMHitsDownloader:
     def process_period(self, ym_client, date1, date2):
         """Обработка данных за указанный период"""
         try:
+            # Проверяем, что date2 не является сегодняшней или будущей датой
+            today = datetime.now().strftime('%Y-%m-%d')
+            if date2 >= today:
+                date2 = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+                logger.info(f"Скорректирован диапазон дат на {date1}-{date2} для избежания будущих дат")
+            
             logger.info(f"Обработка периода {date1} - {date2}")
             
             # Создание запроса
@@ -229,6 +240,10 @@ class YMHitsDownloader:
             # Получение списка периодов
             periods = self.get_weekly_periods(start_date)
             logger.info(f"Всего периодов для обработки: {len(periods)}")
+            
+            if not periods:
+                logger.warning("Нет периодов для обработки (начальная дата может быть в будущем)")
+                return False
             
             # Обработка каждого периода
             for i, (date1, date2) in enumerate(periods, 1):
