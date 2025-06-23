@@ -30,14 +30,13 @@ def get_direct_report(token, date_from, date_to):
                 "Date",
                 "CampaignId", 
                 "CampaignName",
-                "AdId",  # Номер объявления (utm_content)
                 "Clicks",
                 "Cost",
                 "Ctr",
                 "Impressions"
             ],
-            "ReportName": "AdPerformanceReport",
-            "ReportType": "AD_PERFORMANCE_REPORT",
+            "ReportName": "CampaignPerformanceReport",
+            "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",  # Измененный тип отчета
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES"
@@ -45,11 +44,15 @@ def get_direct_report(token, date_from, date_to):
     }
 
     try:
+        print("Отправляемый запрос:", report_body)  # Для отладки
         response = requests.post(url, headers=headers, json=report_body, timeout=30)
+        print("Статус ответа:", response.status_code)  # Для отладки
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        print(f"Ошибка API: {e}\nОтвет: {e.response.text if e.response else 'Нет ответа'}")
+        print(f"Ошибка API: {e}")
+        if hasattr(e, 'response') and e.response:
+            print(f"Тело ответа: {e.response.text}")  # Вывод полного ответа об ошибке
         return None
 
 def save_to_postgres(data, db_config):
@@ -70,7 +73,6 @@ def save_to_postgres(data, db_config):
                 date DATE,
                 campaign_id BIGINT,
                 campaign_name TEXT,
-                ad_id BIGINT,
                 clicks INTEGER,
                 cost DECIMAL(15, 2),
                 ctr DECIMAL(5, 2),
@@ -86,11 +88,11 @@ def save_to_postgres(data, db_config):
             try:
                 cur.execute("""
                     INSERT INTO row.yandex_direct_stats VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
-                    values[0], int(values[1]), values[2], int(values[3]),
-                    int(values[4]), float(values[5]), float(values[6]), int(values[7])
+                    values[0], int(values[1]), values[2],
+                    int(values[3]), float(values[4]), float(values[5]), int(values[6])
                 ))
             except Exception as e:
                 print(f"Ошибка в строке: {line}\n{str(e)}")
