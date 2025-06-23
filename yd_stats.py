@@ -36,7 +36,7 @@ def get_direct_report(token, date_from, date_to):
                 "Impressions"
             ],
             "ReportName": "CampaignPerformanceReport",
-            "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",  # Измененный тип отчета
+            "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES"
@@ -44,15 +44,15 @@ def get_direct_report(token, date_from, date_to):
     }
 
     try:
-        print("Отправляемый запрос:", report_body)  # Для отладки
+        print("Отправляемый запрос:", report_body)
         response = requests.post(url, headers=headers, json=report_body, timeout=30)
-        print("Статус ответа:", response.status_code)  # Для отладки
+        print("Статус ответа:", response.status_code)
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
         print(f"Ошибка API: {e}")
         if hasattr(e, 'response') and e.response:
-            print(f"Тело ответа: {e.response.text}")  # Вывод полного ответа об ошибке
+            print(f"Тело ответа: {e.response.text}")
         return None
 
 def save_to_postgres(data, db_config):
@@ -67,7 +67,7 @@ def save_to_postgres(data, db_config):
         )
         cur = conn.cursor()
 
-        # Создаем таблицу (если не существует)
+        # Создаем таблицу если не существует
         cur.execute("""
             CREATE TABLE IF NOT EXISTS row.yandex_direct_stats (
                 date DATE,
@@ -80,31 +80,45 @@ def save_to_postgres(data, db_config):
             )
         """)
 
-        lines = data.strip().split('\n')[1:]  # Пропускаем заголовок
+        lines = data.strip().split('\n')
+        processed_rows = 0
+        
         for line in lines:
-            if not line.strip():
+            if not line.strip() or line.startswith('"') or line.startswith('Date\t') or line.startswith('Total rows:'):
                 continue
+                
             values = line.split('\t')
+            if len(values) != 7:
+                print(f"Пропущена строка (неверное кол-во полей): {line}")
+                continue
+                
             try:
                 cur.execute("""
                     INSERT INTO row.yandex_direct_stats VALUES (
                         %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
-                    values[0], int(values[1]), values[2],
-                    int(values[3]), float(values[4]), float(values[5]), int(values[6])
+                    values[0].strip(),  # Date
+                    int(values[1]),    # CampaignId
+                    values[2].strip(),  # CampaignName
+                    int(values[3]),     # Clicks
+                    float(values[4]),   # Cost
+                    float(values[5]),   # Ctr
+                    int(values[6])      # Impressions
                 ))
-            except Exception as e:
-                print(f"Ошибка в строке: {line}\n{str(e)}")
+                processed_rows += 1
+            except (ValueError, IndexError) as e:
+                print(f"Пропущена строка: {line} | Ошибка: {str(e)}")
                 continue
 
         conn.commit()
-        print(f"✅ Данные загружены. Обработано {len(lines)} строк")
+        print(f"✅ Успешно загружено {processed_rows} строк")
         
     except Exception as e:
         print(f"❌ Ошибка БД: {str(e)}")
         if conn:
             conn.rollback()
+        raise  # Пробрасываем исключение дальше
     finally:
         if conn:
             conn.close()
@@ -123,12 +137,14 @@ if __name__ == "__main__":
         
         if report_data:
             print("📊 Пример данных:")
-            print("\n".join(report_data.split('\n')[:3]))  # Вывод первых 3 строк
+            print("\n".join(report_data.split('\n')[:3]))
             save_to_postgres(report_data, db_config)
         else:
             print("❌ Не удалось получить данные")
+            sys.exit(1)
 
     except Exception as e:
         print(f"🔥 Критическая ошибка: {str(e)}")
+        sys.exit(1)
     finally:
         print("Готово")
