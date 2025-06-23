@@ -1,5 +1,4 @@
 import requests
-import psycopg2
 from datetime import datetime, timedelta
 import configparser
 from pathlib import Path
@@ -9,7 +8,7 @@ def load_config():
     config.read(Path(__file__).parent / 'config.ini')
     return config
 
-def get_report(token, date_from, date_to):
+def get_direct_report(token, date_from, date_to):
     url = "https://api.direct.yandex.com/json/v5/reports"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -17,11 +16,23 @@ def get_report(token, date_from, date_to):
         "Content-Type": "application/json"
     }
 
-    body = {
-        "method": "get",  # Ключевое исправление!
+    report_body = {
+        "method": "get",
         "params": {
-            "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
-            "FieldNames": ["Date", "CampaignId", "AdId", "Clicks", "Cost"],
+            "SelectionCriteria": {
+                "DateFrom": date_from,
+                "DateTo": date_to
+            },
+            "FieldNames": [
+                "Date",
+                "CampaignId",
+                "CampaignName",
+                "AdId",
+                "Clicks",
+                "Cost",
+                "Ctr"
+            ],
+            "ReportName": "AD_PERFORMANCE_REPORT",  # Обязательное поле!
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -30,20 +41,31 @@ def get_report(token, date_from, date_to):
     }
 
     try:
-        response = requests.post(url, headers=headers, json=body)
+        response = requests.post(url, headers=headers, json=report_body)
         response.raise_for_status()
         return response.text
-    except Exception as e:
-        print(f"Ошибка: {e}\nПолный ответ: {response.text}")
+    except requests.exceptions.RequestException as e:
+        print(f"Ошибка запроса: {e}")
+        print(f"Ответ сервера: {e.response.text if e.response else 'Нет ответа'}")
         return None
 
 if __name__ == "__main__":
-    config = load_config()
-    token = config['YandexDirect']['ACCESS_TOKEN']
-    date_to = datetime.now().strftime('%Y-%m-%d')
-    date_from = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    try:
+        config = load_config()
+        token = config['YandexDirect']['ACCESS_TOKEN']
+        
+        date_to = datetime.now().strftime('%Y-%m-%d')
+        date_from = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
-    if report := get_report(token, date_from, date_to):
-        print(report[:500])  # Вывод первых 500 символов для проверки
-    else:
-        print("Не удалось получить отчет")
+        print(f"🔄 Запрос данных за {date_from} - {date_to}...")
+        report_data = get_direct_report(token, date_from, date_to)
+        
+        if report_data:
+            print("✅ Данные получены. Первые строки:")
+            print(report_data.split('\n')[0])  # Заголовки
+            print(report_data.split('\n')[1])  # Первая строка данных
+        else:
+            print("❌ Не удалось получить данные")
+
+    except Exception as e:
+        print(f"🔥 Критическая ошибка: {e}")
