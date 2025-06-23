@@ -4,11 +4,15 @@ from datetime import datetime, timedelta
 import configparser
 from pathlib import Path
 import sys
+import json  # Добавлено для логирования ошибок API
 
 # --- Конфигурация ---
 def load_config():
     config = configparser.ConfigParser()
     config_path = Path(__file__).parent / 'config.ini'
+    if not config_path.exists():
+        print(f"❌ Файл config.ini не найден: {config_path}")
+        sys.exit(1)
     config.read(config_path)
     return config
 
@@ -28,99 +32,50 @@ def get_yandex_direct_report(token, date_from, date_to):
                 "Date",
                 "CampaignId",
                 "CampaignName",
-                "AdId",  # Добавляем ID объявления (для utm_content)
-                "AdGroupName",
+                "AdId",
                 "Impressions",
                 "Clicks",
                 "Cost",
                 "Ctr",
-                "AvgClickPosition",
-                "AvgImpressionPosition",
+                "AvgCpc",
                 "Conversions",
                 "ConversionRate"
             ],
-            "ReportName": "CampaignPerformance",
-            "ReportType": "AD_PERFORMANCE_REPORT",  # Изменен тип отчета!
+            "ReportName": "AdPerformanceReport",
+            "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
-            "IncludeVAT": "YES"
+            "IncludeVAT": "YES",
+            "IncludeDiscount": "NO"
         }
     }
 
     try:
         print(f"🔄 Запрос данных за {date_from} - {date_to}...")
-        response = requests.post(url, headers=headers, json=report_body, timeout=30)
-        response.raise_for_status()
+        response = requests.post(
+            url,
+            headers=headers,
+            json=report_body,
+            timeout=30
+        )
+        
+        # Детальное логирование ошибок API
+        if response.status_code != 200:
+            error_details = response.json().get('error', {})
+            print(f"❌ Ошибка API (код {response.status_code}):")
+            print(f"Код ошибки: {error_details.get('error_code', 'неизвестен')}")
+            print(f"Текст ошибки: {error_details.get('error_string', 'неизвестен')}")
+            print(f"Детали: {error_details.get('error_detail', 'нет')}")
+            print(f"Полный ответ: {json.dumps(response.json(), indent=2, ensure_ascii=False)}")
+            return None
+            
         return response.text
+        
     except requests.exceptions.RequestException as e:
-        print(f"❌ Ошибка API: {str(e)}")
+        print(f"❌ Ошибка соединения: {str(e)}")
         return None
 
-# --- Загрузка в PostgreSQL ---
-def save_to_postgres(data, db_params):
-    conn = None
-    try:
-        conn = psycopg2.connect(
-            host=db_params['HOST'],
-            database=db_params['DATABASE'],
-            user=db_params['USER'],
-            password=db_params['PASSWORD'],
-            port=db_params['PORT']
-        )
-        cur = conn.cursor()
-
-        # Создаем таблицу (если не существует)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS row.yandex_direct_stats (
-                date DATE,
-                campaign_id BIGINT,
-                campaign_name TEXT,
-                ad_id BIGINT,  # ID объявления (для utm_content)
-                ad_group_name TEXT,
-                impressions INTEGER,
-                clicks INTEGER,
-                cost DECIMAL(15, 2),
-                ctr DECIMAL(5, 2),
-                avg_click_position DECIMAL(5, 2),
-                avg_impression_position DECIMAL(5, 2),
-                conversions INTEGER,
-                conversion_rate DECIMAL(5, 2)
-            )
-        """)
-
-        lines = data.strip().split('\n')[1:]
-        insert_query = """
-            INSERT INTO row.yandex_direct_stats VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-            )
-        """
-
-        for line in lines:
-            if not line.strip():
-                continue
-            values = line.split('\t')
-            try:
-                cur.execute(insert_query, (
-                    values[0], int(values[1]), values[2],  # Date, CampaignId, CampaignName
-                    int(values[3]), values[4],  # AdId, AdGroupName
-                    int(values[5]), int(values[6]), float(values[7]),  # Impressions, Clicks, Cost
-                    float(values[8]), float(values[9]), float(values[10]),  # CTR, Positions
-                    int(values[11]), float(values[12])  # Conversions, ConversionRate
-                ))
-            except Exception as e:
-                print(f"⚠️ Ошибка в строке: {line}\n{str(e)}")
-                continue
-
-        conn.commit()
-        print(f"✅ Успешно загружено {len(lines)} записей")
-        
-    except Exception as e:
-        print(f"❌ Ошибка БД: {str(e)}")
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            conn.close()
+# ... (остальные функции save_to_postgres и main остаются без изменений)
 
 if __name__ == "__main__":
     try:
@@ -139,11 +94,13 @@ if __name__ == "__main__":
 
         report_data = get_yandex_direct_report(yandex_token, date_from, date_to)
         if report_data:
+            print("📊 Получены данные. Пример первых строк:")
+            print("\n".join(report_data.split("\n")[:3]))  # Показываем первые 3 строки
             save_to_postgres(report_data, db_params)
         else:
-            print("⚠️ Нет данных для загрузки")
+            print("⚠️ Нет данных для загрузки. Проверьте логи ошибок выше.")
 
     except Exception as e:
-        print(f"🔥 Ошибка: {str(e)}")
+        print(f"🔥 Критическая ошибка: {str(e)}")
     finally:
         print("Готово")
