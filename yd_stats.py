@@ -7,20 +7,13 @@ import sys
 
 # --- Конфигурация ---
 def load_config():
-    """Загружает настройки из config.ini"""
     config = configparser.ConfigParser()
     config_path = Path(__file__).parent / 'config.ini'
-    
-    if not config_path.exists():
-        print(f"❌ Ошибка: Файл config.ini не найден по пути: {config_path}")
-        sys.exit(1)
-    
     config.read(config_path)
     return config
 
 # --- Получение данных из API ---
 def get_yandex_direct_report(token, date_from, date_to):
-    """Запрашивает статистику из Яндекс.Директ"""
     url = "https://api.direct.yandex.com/json/v5/reports"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -30,14 +23,13 @@ def get_yandex_direct_report(token, date_from, date_to):
 
     report_body = {
         "params": {
-            "SelectionCriteria": {
-                "DateFrom": date_from,
-                "DateTo": date_to
-            },
+            "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
             "FieldNames": [
                 "Date",
                 "CampaignId",
                 "CampaignName",
+                "AdId",  # Добавляем ID объявления (для utm_content)
+                "AdGroupName",
                 "Impressions",
                 "Clicks",
                 "Cost",
@@ -48,7 +40,7 @@ def get_yandex_direct_report(token, date_from, date_to):
                 "ConversionRate"
             ],
             "ReportName": "CampaignPerformance",
-            "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",
+            "ReportType": "AD_PERFORMANCE_REPORT",  # Изменен тип отчета!
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES"
@@ -56,7 +48,7 @@ def get_yandex_direct_report(token, date_from, date_to):
     }
 
     try:
-        print(f"🔄 Запрос данных за период {date_from} - {date_to}...")
+        print(f"🔄 Запрос данных за {date_from} - {date_to}...")
         response = requests.post(url, headers=headers, json=report_body, timeout=30)
         response.raise_for_status()
         return response.text
@@ -66,10 +58,8 @@ def get_yandex_direct_report(token, date_from, date_to):
 
 # --- Загрузка в PostgreSQL ---
 def save_to_postgres(data, db_params):
-    """Сохраняет данные в PostgreSQL"""
     conn = None
     try:
-        # Подключение к БД
         conn = psycopg2.connect(
             host=db_params['HOST'],
             database=db_params['DATABASE'],
@@ -79,39 +69,46 @@ def save_to_postgres(data, db_params):
         )
         cur = conn.cursor()
 
-        # Парсинг TSV
-        lines = data.strip().split('\n')[1:]  # Пропускаем заголовок
-        
-        # Подготовка и выполнение запроса
+        # Создаем таблицу (если не существует)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS row.yandex_direct_stats (
+                date DATE,
+                campaign_id BIGINT,
+                campaign_name TEXT,
+                ad_id BIGINT,  # ID объявления (для utm_content)
+                ad_group_name TEXT,
+                impressions INTEGER,
+                clicks INTEGER,
+                cost DECIMAL(15, 2),
+                ctr DECIMAL(5, 2),
+                avg_click_position DECIMAL(5, 2),
+                avg_impression_position DECIMAL(5, 2),
+                conversions INTEGER,
+                conversion_rate DECIMAL(5, 2)
+            )
+        """)
+
+        lines = data.strip().split('\n')[1:]
         insert_query = """
-            INSERT INTO row.yandex_direct_stats (
-                date, campaign_id, campaign_name, impressions, clicks, cost,
-                ctr, avg_click_position, avg_impression_position,
-                conversions, conversion_rate
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO row.yandex_direct_stats VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
         """
-        
+
         for line in lines:
             if not line.strip():
                 continue
-                
             values = line.split('\t')
             try:
                 cur.execute(insert_query, (
-                    values[0],  # Date
-                    int(values[1]),  # CampaignId
-                    values[2],  # CampaignName
-                    int(values[3]),  # Impressions
-                    int(values[4]),  # Clicks
-                    float(values[5]),  # Cost
-                    float(values[6]),  # Ctr
-                    float(values[7]),  # AvgClickPosition
-                    float(values[8]),  # AvgImpressionPosition
-                    int(values[9]),  # Conversions
-                    float(values[10])  # ConversionRate
+                    values[0], int(values[1]), values[2],  # Date, CampaignId, CampaignName
+                    int(values[3]), values[4],  # AdId, AdGroupName
+                    int(values[5]), int(values[6]), float(values[7]),  # Impressions, Clicks, Cost
+                    float(values[8]), float(values[9]), float(values[10]),  # CTR, Positions
+                    int(values[11]), float(values[12])  # Conversions, ConversionRate
                 ))
-            except (IndexError, ValueError) as e:
-                print(f"⚠️ Ошибка обработки строки: {line}\nОшибка: {str(e)}")
+            except Exception as e:
+                print(f"⚠️ Ошибка в строке: {line}\n{str(e)}")
                 continue
 
         conn.commit()
@@ -125,16 +122,10 @@ def save_to_postgres(data, db_params):
         if conn:
             conn.close()
 
-# --- Основной поток ---
 if __name__ == "__main__":
     try:
-        # Загрузка конфигурации
         config = load_config()
-        
-        # Настройки Яндекс.Директ
         yandex_token = config['YandexDirect']['ACCESS_TOKEN']
-        
-        # Настройки БД
         db_params = {
             'HOST': config['Database']['HOST'],
             'DATABASE': config['Database']['DATABASE'],
@@ -143,19 +134,16 @@ if __name__ == "__main__":
             'PORT': config['Database']['PORT']
         }
 
-        # Определяем даты (последние 7 дней)
         date_to = datetime.now().strftime('%Y-%m-%d')
         date_from = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
-        # Получаем данные
         report_data = get_yandex_direct_report(yandex_token, date_from, date_to)
-        
         if report_data:
             save_to_postgres(report_data, db_params)
         else:
             print("⚠️ Нет данных для загрузки")
 
     except Exception as e:
-        print(f"🔥 Критическая ошибка: {str(e)}")
+        print(f"🔥 Ошибка: {str(e)}")
     finally:
-        print("Завершение работы")
+        print("Готово")
