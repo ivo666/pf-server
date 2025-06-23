@@ -76,7 +76,8 @@ def save_to_postgres(data, db_config):
                 clicks INTEGER,
                 cost DECIMAL(15, 2),
                 ctr DECIMAL(5, 2),
-                impressions INTEGER
+                impressions INTEGER,
+                PRIMARY KEY (date, campaign_id)
             )
         """)
 
@@ -93,20 +94,23 @@ def save_to_postgres(data, db_config):
                 continue
                 
             try:
+                # Используем INSERT ON CONFLICT DO NOTHING для пропуска дубликатов
                 cur.execute("""
                     INSERT INTO row.yandex_direct_stats VALUES (
                         %s, %s, %s, %s, %s, %s, %s
                     )
+                    ON CONFLICT (date, campaign_id) DO NOTHING
                 """, (
-                    values[0].strip(),  # Date
-                    int(values[1]),    # CampaignId
-                    values[2].strip(),  # CampaignName
-                    int(values[3]),     # Clicks
-                    float(values[4]),   # Cost
-                    float(values[5]),   # Ctr
-                    int(values[6])      # Impressions
+                    values[0].strip(),          # Date
+                    int(values[1]),            # CampaignId
+                    values[2].strip(),          # CampaignName
+                    int(values[3]),             # Clicks
+                    float(values[4]) / 1000000, # Cost (конвертируем микроединицы в рубли)
+                    float(values[5]),           # Ctr
+                    int(values[6])              # Impressions
                 ))
-                processed_rows += 1
+                if cur.rowcount > 0:
+                    processed_rows += 1
             except (ValueError, IndexError) as e:
                 print(f"Пропущена строка: {line} | Ошибка: {str(e)}")
                 continue
@@ -118,7 +122,7 @@ def save_to_postgres(data, db_config):
         print(f"❌ Ошибка БД: {str(e)}")
         if conn:
             conn.rollback()
-        raise  # Пробрасываем исключение дальше
+        raise
     finally:
         if conn:
             conn.close()
