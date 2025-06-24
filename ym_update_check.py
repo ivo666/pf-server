@@ -1,15 +1,41 @@
 import psycopg2
 import logging
+from logging.handlers import RotatingFileHandler  # логирование
+import os
 from datetime import datetime, timedelta
 
-# Настройка логгирования
+# ==================== НАСТРОЙКА ЛОГГИРОВАНИЯ ====================
+log_path = '/var/log/pf-server/ym_update_check.log'
+
+# 1. Обработка прав на файл лога
+try:
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)  # Создать папку если нужно
+    if not os.path.exists(log_path):
+        open(log_path, 'a').close()
+    os.chmod(log_path, 0o644)  # Права rw-r--r--
+    os.chown(log_path, uid=0, gid=0)  # Для root (uid/gid=0)
+except PermissionError as e:
+    print(f"⚠ Ошибка доступа к лог-файлу: {e}")
+    raise
+
+# 2. Настройка ротации логов (5 МБ, 3 бэкапа)
+log_handler = RotatingFileHandler(
+    log_path,
+    maxBytes=5*1024*1024,
+    backupCount=3,
+    encoding='utf-8'
+)
+
+# 3. Инициализация логгера
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()
+        log_handler,            # Запись в файл с ротацией
+        logging.StreamHandler()  # Вывод в консоль
     ]
 )
+# ================================================================
 
 def check_source_data():
     try:
