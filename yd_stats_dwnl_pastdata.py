@@ -182,8 +182,8 @@ if __name__ == "__main__":
         db_config = config['Database']
 
         # Указываем период за 2025 год (или любой другой)
-        start_date = "2025-01-01"
-        end_date = "2025-06-20"
+        start_date = "2025-06-10"
+        end_date = "2025-06-24"
 
         # Разбиваем на недельные интервалы
         date_ranges = generate_weekly_ranges(start_date, end_date)
