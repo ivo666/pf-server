@@ -75,9 +75,8 @@ def transfer_yesterday_data():
             existing_count = cursor.fetchone()[0]
             
             if existing_count > 0:
-                print(f"Внимание: В целевой таблице уже есть {existing_count} записей за {yesterday}")
-                # Здесь можно добавить логику обновления или пропуска
-                # В текущей реализации просто продолжаем
+                print(f"Данные за {yesterday} уже существуют в целевой таблице. Пропускаем вставку.")
+                return
                 
             # Получаем данные из исходной таблицы за вчерашний день
             cursor.execute(source_query, (yesterday,))
