@@ -59,7 +59,7 @@ def main():
         # 2. Подготовка данных
         df.columns = df.columns.str.replace('.', '_').str.lower()
 
-        # Преобразование дат
+        # Преобразование только даты
         if 'start_date' in df.columns:
             df['start_date'] = pd.to_datetime(df['start_date'], format='%d.%m.%Y', errors='coerce')
         else:
@@ -75,16 +75,10 @@ def main():
             # Проверка подключения
             with engine.connect() as conn:
                 logging.info("Подключение к PostgreSQL успешно")
-                
-                # Убедимся, что тип столбца content_profit - TEXT
-                conn.execute("""
-                    ALTER TABLE IF EXISTS yd_campaigns_list 
-                    ALTER COLUMN content_profit TYPE TEXT
-                """)
         except Exception as e:
             raise Exception(f"Ошибка PostgreSQL: {str(e)}")
 
-        # 4. Загрузка данных с явным управлением транзакцией
+        # 4. Загрузка данных
         try:
             with engine.begin() as connection:  # Автоматическое подтверждение транзакции
                 df.to_sql(
@@ -96,8 +90,8 @@ def main():
                         'campaign': types.String(),
                         'utm_campaign': types.String(),
                         'content_id': types.String(),
-                        'content_profit': types.String(),  # Изменено на String
-                        'start_date': types.Date(),
+                        'content_profit': types.String(),  # Оставляем как строку
+                        'start_date': types.Date(),        # Только дата преобразуется
                         'comments_date_17_06_2025': types.String(),
                         'comments_date_24_06_2025': types.String(),
                         'comments_date_30_06_25': types.String(),
