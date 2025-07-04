@@ -5,7 +5,7 @@ from pathlib import Path
 import datetime
 
 # 1. Проверка файла credentials
-CREDS_PATH = "/etc/secrets/pf-server/profif2023-272a0a314fca.json"
+CREDS_PATH = "/etc/secrets/pf-server/profif2023-745db15953f5.json"
 if not Path(CREDS_PATH).exists():
     raise FileNotFoundError(f"Файл {CREDS_PATH} не найден!")
 
