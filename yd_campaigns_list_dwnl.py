@@ -93,7 +93,7 @@ def main():
                     'campaign': types.String(),
                     'utm_campaign': types.String(),
                     'content_id': types.String(),
-                    'content_profit': types.Numeric(),
+                    'content_profit': types.String(),
                     'start_date': types.Date(),
                     'comments_date_17_06_2025': types.String(),
                     'comments_date_24_06_2025': types.String(),
