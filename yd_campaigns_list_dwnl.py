@@ -58,8 +58,12 @@ def main():
 
         # 2. Подготовка данных
         df.columns = df.columns.str.replace('.', '_').str.lower()
+        
+        # Оставляем только колонки, которые есть в целевой таблице
+        target_columns = ['campaign', 'utm_campaign', 'content_id', 'content_profit', 'start_date']
+        df = df[[col for col in df.columns if col in target_columns]]
 
-        # Преобразование только даты
+        # Преобразование даты
         if 'start_date' in df.columns:
             df['start_date'] = pd.to_datetime(df['start_date'], format='%d.%m.%Y', errors='coerce')
         else:
@@ -78,12 +82,14 @@ def main():
         except Exception as e:
             raise Exception(f"Ошибка PostgreSQL: {str(e)}")
 
-        # 4. Загрузка данных
+        # 4. Загрузка данных в схему "row"
         try:
             with engine.begin() as connection:
+                # Указываем схему в параметре schema
                 df.to_sql(
                     'yd_campaigns_list',
                     connection,
+                    schema='row',  # Указываем целевую схему
                     if_exists='append',
                     index=False,
                     dtype={
@@ -91,21 +97,17 @@ def main():
                         'utm_campaign': types.String(),
                         'content_id': types.String(),
                         'content_profit': types.String(),
-                        'start_date': types.Date(),
-                        'comments_date_17_06_2025': types.String(),
-                        'comments_date_24_06_2025': types.String(),
-                        'comments_date_30_06_25': types.String(),
-                        'comments_date_02_07_2025': types.String()
+                        'start_date': types.Date()
                     },
                     method='multi',
                     chunksize=100
                 )
             
-            # Проверка загруженных данных (без сортировки по id)
+            # Проверка загруженных данных
             with engine.connect() as conn:
-                result = pd.read_sql("SELECT * FROM yd_campaigns_list LIMIT 5", conn)
+                result = pd.read_sql('SELECT * FROM "row".yd_campaigns_list LIMIT 5', conn)
                 logging.info(f"Первые 5 записей:\n{result.to_string()}")
-                count = pd.read_sql("SELECT COUNT(*) as count FROM yd_campaigns_list", conn)['count'].iloc[0]
+                count = pd.read_sql('SELECT COUNT(*) as count FROM "row".yd_campaigns_list', conn)['count'].iloc[0]
                 logging.info(f"Всего записей в таблице: {count}")
                 
         except Exception as e:
