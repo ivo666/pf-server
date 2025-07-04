@@ -45,68 +45,75 @@ def main():
         cfg = load_config()
         logging.info("Конфигурация загружена")
 
-        # 1. Проверка файла credentials
-        if not Path(cfg['gsheets']['creds_path']).exists():
-            raise FileNotFoundError(f"Файл {cfg['gsheets']['creds_path']} не найден!")
-        
-        # 2. Настройка подключения к Google Sheets
+        # 1. Получение данных из Google Sheets
         try:
             gc = gspread.service_account(filename=cfg['gsheets']['creds_path'])
             sh = gc.open(cfg['gsheets']['spreadsheet'])
             worksheet = sh.worksheet(cfg['gsheets']['worksheet'])
             data = worksheet.get_all_records()
             df = pd.DataFrame(data)
-            
             logging.info(f"Данные получены. Записей: {len(df)}")
         except Exception as e:
             raise Exception(f"Ошибка Google Sheets: {str(e)}")
 
-        # 3. Подготовка данных
+        # 2. Подготовка данных
         df.columns = df.columns.str.replace('.', '_').str.lower()
 
+        # Преобразование дат
         if 'start_date' in df.columns:
             df['start_date'] = pd.to_datetime(df['start_date'], format='%d.%m.%Y', errors='coerce')
         else:
             logging.warning("Столбец start_date отсутствует")
 
-        # 4. Подключение к PostgreSQL
+        # 3. Подключение к PostgreSQL
         try:
             engine = create_engine(
                 f"postgresql+psycopg2://{cfg['db']['user']}:{cfg['db']['password']}@"
                 f"{cfg['db']['host']}:{cfg['db']['port']}/{cfg['db']['database']}"
             )
             
-            # Тест подключения
+            # Проверка подключения
             with engine.connect() as conn:
                 logging.info("Подключение к PostgreSQL успешно")
+                
+                # Убедимся, что тип столбца content_profit - TEXT
+                conn.execute("""
+                    ALTER TABLE IF EXISTS yd_campaigns_list 
+                    ALTER COLUMN content_profit TYPE TEXT
+                """)
         except Exception as e:
             raise Exception(f"Ошибка PostgreSQL: {str(e)}")
 
-        # 5. Загрузка данных
+        # 4. Загрузка данных с явным управлением транзакцией
         try:
-            df.to_sql(
-                'yd_campaigns_list',
-                engine,
-                if_exists='append',
-                index=False,
-                dtype={
-                    'campaign': types.String(),
-                    'utm_campaign': types.String(),
-                    'content_id': types.String(),
-                    'content_profit': types.String(),
-                    'start_date': types.Date(),
-                    'comments_date_17_06_2025': types.String(),
-                    'comments_date_24_06_2025': types.String(),
-                    'comments_date_30_06_25': types.String(),
-                    'comments_date_02_07_2025': types.String()
-                }
-            )
-            logging.info(f"Успешно загружено {len(df)} записей")
+            with engine.begin() as connection:  # Автоматическое подтверждение транзакции
+                df.to_sql(
+                    'yd_campaigns_list',
+                    connection,
+                    if_exists='append',
+                    index=False,
+                    dtype={
+                        'campaign': types.String(),
+                        'utm_campaign': types.String(),
+                        'content_id': types.String(),
+                        'content_profit': types.String(),  # Изменено на String
+                        'start_date': types.Date(),
+                        'comments_date_17_06_2025': types.String(),
+                        'comments_date_24_06_2025': types.String(),
+                        'comments_date_30_06_25': types.String(),
+                        'comments_date_02_07_2025': types.String()
+                    },
+                    method='multi',
+                    chunksize=100
+                )
             
-            # Проверка
-            result = pd.read_sql("SELECT COUNT(*) as count FROM yd_campaigns_list", engine)
-            logging.info(f"Всего записей в таблице: {result['count'].iloc[0]}")
-            
+            # Проверка загруженных данных
+            with engine.connect() as conn:
+                result = pd.read_sql("SELECT * FROM yd_campaigns_list ORDER BY id DESC LIMIT 5", conn)
+                logging.info(f"Последние 5 записей:\n{result.to_string()}")
+                count = pd.read_sql("SELECT COUNT(*) as count FROM yd_campaigns_list", conn)['count'].iloc[0]
+                logging.info(f"Всего записей в таблице: {count}")
+                
         except Exception as e:
             raise Exception(f"Ошибка загрузки: {str(e)}")
             
