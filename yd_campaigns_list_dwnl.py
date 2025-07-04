@@ -1,59 +1,56 @@
 import pandas as pd
 import gspread
 from sqlalchemy import create_engine, types
-import configparser
 from pathlib import Path
+import datetime
 
-# 1. Загрузка конфигурации
-config = configparser.ConfigParser()
-config.read('config.ini')
+# 1. Проверка файла credentials
+CREDS_PATH = "/etc/secrets/pf-server/profif2023-272a0a314fca.json"
+if not Path(CREDS_PATH).exists():
+    raise FileNotFoundError(f"Файл {CREDS_PATH} не найден!")
 
-# Путь к credentials.json (добавьте этот параметр в config.ini)
-CREDENTIALS_PATH = config.get('GoogleSheets', 'CREDENTIALS_PATH', fallback=None)
-if not CREDENTIALS_PATH:
-    raise ValueError("Не указан путь к credentials.json в config.ini")
-
-# 2. Получение данных из Google Sheets
+# 2. Настройка подключения к Google Sheets
 try:
-    gc = gspread.service_account(filename=CREDENTIALS_PATH)
+    gc = gspread.service_account(filename=CREDS_PATH)
     sh = gc.open("ProfiFilter_cpc_fvkart")
     worksheet = sh.worksheet("Campaigns")
     data = worksheet.get_all_records()
     df = pd.DataFrame(data)
     
-    print(f"Успешно получено {len(df)} записей из Google Sheets")
+    print(f"[{datetime.datetime.now()}] Данные получены. Записей: {len(df)}")
 except Exception as e:
-    raise Exception(f"Ошибка при получении данных из Google Sheets: {str(e)}")
+    raise Exception(f"Ошибка Google Sheets: {str(e)}")
 
 # 3. Подготовка данных
 df.columns = df.columns.str.replace('.', '_').str.lower()
 
-# Преобразование дат с явным указанием формата
 if 'start_date' in df.columns:
     df['start_date'] = pd.to_datetime(df['start_date'], format='%d.%m.%Y', errors='coerce')
 else:
-    print("Предупреждение: столбец 'start_date' не найден в данных")
+    print("Предупреждение: столбец start_date отсутствует")
 
-# 4. Подключение к удалённой PostgreSQL
+# 4. Подключение к PostgreSQL (серверные параметры)
+DB_CONFIG = {
+    'host': '212.67.12.162',  # или 'localhost' если на том же сервере
+    'database': 'pvs',
+    'user': 'postgres',
+    'password': 'BdfyjdDbrnjh',
+    'port': '5432'
+}
+
 try:
-    db_config = {
-        'host': config.get('Database', 'HOST'),
-        'database': config.get('Database', 'DATABASE'),
-        'user': config.get('Database', 'USER'),
-        'password': config.get('Database', 'PASSWORD'),
-        'port': config.get('Database', 'PORT', fallback='5432')
-    }
+    engine = create_engine(
+        f"postgresql+psycopg2://{DB_CONFIG['user']}:{DB_CONFIG['password']}@"
+        f"{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
+    )
     
-    connection_string = f"postgresql+psycopg2://{db_config['user']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['database']}"
-    engine = create_engine(connection_string)
-    
-    # Проверка подключения
+    # Тест подключения
     with engine.connect() as conn:
-        print(f"Успешное подключение к PostgreSQL серверу: {db_config['host']}")
+        print(f"[{datetime.datetime.now()}] Подключение к PostgreSQL успешно")
 except Exception as e:
-    raise Exception(f"Ошибка подключения к PostgreSQL: {str(e)}")
+    raise Exception(f"Ошибка PostgreSQL: {str(e)}")
 
-# 5. Загрузка данных в PostgreSQL
+# 5. Загрузка данных
 try:
     df.to_sql(
         'yd_campaigns_list',
@@ -72,13 +69,13 @@ try:
             'comments_date_02_07_2025': types.String()
         }
     )
-    print(f"Успешно загружено {len(df)} записей в таблицу yd_campaigns_list")
+    print(f"[{datetime.datetime.now()}] Успешно загружено {len(df)} записей")
     
-    # Проверка загрузки
+    # Проверка
     result = pd.read_sql("SELECT COUNT(*) as count FROM yd_campaigns_list", engine)
     print(f"Всего записей в таблице: {result['count'].iloc[0]}")
     
 except Exception as e:
-    raise Exception(f"Ошибка при загрузке данных в PostgreSQL: {str(e)}")
+    raise Exception(f"Ошибка загрузки: {str(e)}")
 finally:
     engine.dispose()
