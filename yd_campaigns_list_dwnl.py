@@ -80,7 +80,7 @@ def main():
 
         # 4. Загрузка данных
         try:
-            with engine.begin() as connection:  # Автоматическое подтверждение транзакции
+            with engine.begin() as connection:
                 df.to_sql(
                     'yd_campaigns_list',
                     connection,
@@ -90,8 +90,8 @@ def main():
                         'campaign': types.String(),
                         'utm_campaign': types.String(),
                         'content_id': types.String(),
-                        'content_profit': types.String(),  # Оставляем как строку
-                        'start_date': types.Date(),        # Только дата преобразуется
+                        'content_profit': types.String(),
+                        'start_date': types.Date(),
                         'comments_date_17_06_2025': types.String(),
                         'comments_date_24_06_2025': types.String(),
                         'comments_date_30_06_25': types.String(),
@@ -101,10 +101,10 @@ def main():
                     chunksize=100
                 )
             
-            # Проверка загруженных данных
+            # Проверка загруженных данных (без сортировки по id)
             with engine.connect() as conn:
-                result = pd.read_sql("SELECT * FROM yd_campaigns_list ORDER BY id DESC LIMIT 5", conn)
-                logging.info(f"Последние 5 записей:\n{result.to_string()}")
+                result = pd.read_sql("SELECT * FROM yd_campaigns_list LIMIT 5", conn)
+                logging.info(f"Первые 5 записей:\n{result.to_string()}")
                 count = pd.read_sql("SELECT COUNT(*) as count FROM yd_campaigns_list", conn)['count'].iloc[0]
                 logging.info(f"Всего записей в таблице: {count}")
                 
