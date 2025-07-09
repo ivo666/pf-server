@@ -24,41 +24,13 @@ def load_config():
     config.read(config_path)
     return config
 
-def get_direct_report(token, date_from, date_to, report_type='CAMPAIGN'):
+def get_direct_report(token, date_from, date_to):
     url = "https://api.direct.yandex.com/json/v5/reports"
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
         "Content-Type": "application/json"
     }
-
-    # Определяем параметры отчета в зависимости от типа
-    if report_type == 'CAMPAIGN':
-        field_names = [
-            "Date",
-            "CampaignId", 
-            "CampaignName",
-            "Clicks",
-            "Cost",
-            "Ctr",
-            "Impressions"
-        ]
-        report_type_name = "CAMPAIGN_PERFORMANCE_REPORT"
-        table_name = "rdl.yandex_direct_campaign_stats"
-    else:  # AD report
-        field_names = [
-            "Date",
-            "CampaignId",
-            "CampaignName",
-            "AdId",
-            "AdName",
-            "Clicks",
-            "Cost",
-            "Ctr",
-            "Impressions"
-        ]
-        report_type_name = "AD_PERFORMANCE_REPORT"
-        table_name = "rdl.yandex_direct_ad_stats"
 
     report_body = {
         "method": "get",
@@ -67,9 +39,19 @@ def get_direct_report(token, date_from, date_to, report_type='CAMPAIGN'):
                 "DateFrom": date_from,
                 "DateTo": date_to
             },
-            "FieldNames": field_names,
-            "ReportName": f"{report_type}PerformanceReport",
-            "ReportType": report_type_name,
+            "FieldNames": [
+                "Date",
+                "CampaignId",
+                "CampaignName",
+                "AdId",
+                "AdName",
+                "Clicks",
+                "Cost",
+                "Ctr",
+                "Impressions"
+            ],
+            "ReportName": "AdPerformanceReport",
+            "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES"
@@ -77,17 +59,17 @@ def get_direct_report(token, date_from, date_to, report_type='CAMPAIGN'):
     }
 
     try:
-        logger.info(f"🔄 Загрузка {report_type} данных за период {date_from} — {date_to}...")
+        logger.info(f"🔄 Загрузка данных по объявлениям за {date_from} — {date_to}...")
         response = requests.post(url, headers=headers, json=report_body, timeout=60)
         response.raise_for_status()
-        return response.text, table_name
+        return response.text
     except requests.exceptions.RequestException as e:
         logger.error(f"❌ Ошибка API: {e}")
         if hasattr(e, 'response') and e.response:
             logger.error(f"Тело ответа: {e.response.text}")
-        return None, None
+        return None
 
-def save_to_postgres(data, table_name, db_config):
+def save_to_postgres(data, db_config):
     conn = None
     try:
         conn = psycopg2.connect(
@@ -99,94 +81,61 @@ def save_to_postgres(data, table_name, db_config):
         )
         cur = conn.cursor()
 
-        # Создаем таблицу в слое rdl, если не существует
-        if table_name == "rdl.yandex_direct_campaign_stats":
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    date DATE,
-                    campaign_id BIGINT,
-                    campaign_name TEXT,
-                    clicks INTEGER,
-                    cost DECIMAL(15, 2),
-                    ctr DECIMAL(5, 2),
-                    impressions INTEGER,
-                    PRIMARY KEY (date, campaign_id)
-                )
-            """)
-        else:  # AD stats table
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    date DATE,
-                    campaign_id BIGINT,
-                    campaign_name TEXT,
-                    ad_id BIGINT,
-                    ad_name TEXT,
-                    clicks INTEGER,
-                    cost DECIMAL(15, 2),
-                    ctr DECIMAL(5, 2),
-                    impressions INTEGER,
-                    PRIMARY KEY (date, campaign_id, ad_id)
-                )
-            """)
+        # Создаем таблицу для статистики по объявлениям
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rdl.yandex_direct_ad_stats (
+                date DATE,
+                campaign_id BIGINT,
+                campaign_name TEXT,
+                ad_id BIGINT,
+                ad_name TEXT,
+                clicks INTEGER,
+                cost DECIMAL(15, 2),
+                ctr DECIMAL(5, 2),
+                impressions INTEGER,
+                PRIMARY KEY (date, campaign_id, ad_id)
+            )
+        """)
 
         lines = data.strip().split('\n')
         processed_rows = 0
-        field_count = 7 if table_name == "rdl.yandex_direct_campaign_stats" else 9
         
         for line in lines:
             if not line.strip() or line.startswith('"') or line.startswith('Date\t') or line.startswith('Total rows:'):
                 continue
                 
             values = line.split('\t')
-            if len(values) != field_count:
-                logger.warning(f"⚠ Пропущена строка (неверное кол-во полей): {line}")
+            if len(values) != 9:
+                logger.warning(f"⚠ Пропущена строка (ожидалось 9 полей, получено {len(values)}): {line}")
                 continue
                 
             try:
-                if table_name == "rdl.yandex_direct_campaign_stats":
-                    cur.execute(f"""
-                        INSERT INTO {table_name} VALUES (
-                            %s, %s, %s, %s, %s, %s, %s
-                        )
-                        ON CONFLICT (date, campaign_id) DO NOTHING
-                    """, (
-                        values[0].strip(),          # Date
-                        int(values[1]),             # CampaignId
-                        values[2].strip(),          # CampaignName
-                        int(values[3]),             # Clicks
-                        float(values[4]) / 1000000, # Cost (переводим микроединицы в рубли)
-                        float(values[5]),           # Ctr
-                        int(values[6])              # Impressions
-                    ))
-                else:  # AD stats
-                    cur.execute(f"""
-                        INSERT INTO {table_name} VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s
-                        )
-                        ON CONFLICT (date, campaign_id, ad_id) DO NOTHING
-                    """, (
-                        values[0].strip(),          # Date
-                        int(values[1]),             # CampaignId
-                        values[2].strip(),          # CampaignName
-                        int(values[3]),             # AdId
-                        values[4].strip(),          # AdName
-                        int(values[5]),             # Clicks
-                        float(values[6]) / 1000000, # Cost
-                        float(values[7]),           # Ctr
-                        int(values[8])              # Impressions
-                    ))
-                
-                if cur.rowcount > 0:
-                    processed_rows += 1
+                cur.execute("""
+                    INSERT INTO rdl.yandex_direct_ad_stats VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (date, campaign_id, ad_id) DO NOTHING
+                """, (
+                    values[0].strip(),          # Date
+                    int(values[1]),             # CampaignId
+                    values[2].strip(),          # CampaignName
+                    int(values[3]),             # AdId
+                    values[4].strip(),          # AdName
+                    int(values[5]),             # Clicks
+                    float(values[6]) / 1000000, # Cost (микроединицы → рубли)
+                    float(values[7]),           # Ctr
+                    int(values[8])              # Impressions
+                ))
+                processed_rows += 1
             except (ValueError, IndexError) as e:
-                logger.warning(f"⚠ Пропущена строка: {line} | Ошибка: {str(e)}")
+                logger.warning(f"⚠ Ошибка в строке: {line} | Ошибка: {e}")
                 continue
 
         conn.commit()
-        logger.info(f"✅ Успешно загружено {processed_rows} строк в {table_name}")
+        logger.info(f"✅ Успешно загружено {processed_rows} строк")
         
     except Exception as e:
-        logger.error(f"❌ Ошибка БД: {str(e)}")
+        logger.error(f"❌ Ошибка БД: {e}")
         if conn:
             conn.rollback()
         raise
@@ -194,26 +143,24 @@ def save_to_postgres(data, table_name, db_config):
         if conn:
             conn.close()
 
-def generate_weekly_ranges(start_date, end_date):
-    """Разбивает период на недельные интервалы"""
-    current_date = datetime.strptime(start_date, "%Y-%m-%d")
-    end_date = datetime.strptime(end_date, "%Y-%m-%d")
-    date_ranges = []
+def generate_date_ranges(start_date, end_date):
+    """Разбивает период на недельные интервалы (7 дней)"""
+    current = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    ranges = []
     
-    while current_date < end_date:
-        next_date = current_date + timedelta(days=6)  # Неделя = 7 дней (от current_date до next_date)
-        if next_date > end_date:
-            next_date = end_date
-        date_ranges.append((
-            current_date.strftime("%Y-%m-%d"),
+    while current < end:
+        next_date = min(current + timedelta(days=6), end)
+        ranges.append((
+            current.strftime("%Y-%m-%d"),
             next_date.strftime("%Y-%m-%d")
         ))
-        current_date = next_date + timedelta(days=1)  # Следующая неделя начинается со следующего дня
+        current = next_date + timedelta(days=1)
     
-    return date_ranges
+    return ranges
 
-def check_existing_data(db_config, date_from, date_to, table_name):
-    """Проверяет, есть ли уже данные за указанный период"""
+def check_existing_data(db_config, date_from, date_to):
+    """Проверяет, есть ли данные за указанный период"""
     conn = None
     try:
         conn = psycopg2.connect(
@@ -224,20 +171,16 @@ def check_existing_data(db_config, date_from, date_to, table_name):
             port=db_config['PORT']
         )
         cur = conn.cursor()
-
-        cur.execute(f"""
+        cur.execute("""
             SELECT EXISTS (
-                SELECT 1 FROM {table_name}
+                SELECT 1 FROM rdl.yandex_direct_ad_stats 
                 WHERE date BETWEEN %s AND %s
                 LIMIT 1
             )
         """, (date_from, date_to))
-        
-        exists = cur.fetchone()[0]
-        return exists
-        
+        return cur.fetchone()[0]
     except Exception as e:
-        logger.warning(f"⚠ Ошибка при проверке данных: {str(e)}")
+        logger.error(f"⚠ Ошибка при проверке данных: {e}")
         return False
     finally:
         if conn:
@@ -248,40 +191,26 @@ if __name__ == "__main__":
         config = load_config()
         token = config['YandexDirect']['ACCESS_TOKEN']
         db_config = config['Database']
-
-        # Указываем период
+        
+        # Период для выгрузки
         start_date = "2025-06-10"
         end_date = "2025-06-24"
 
-        # Разбиваем на недельные интервалы
-        date_ranges = generate_weekly_ranges(start_date, end_date)
-
-        # Загружаем данные и по кампаниям, и по объявлениям
-        for report_type in ['CAMPAIGN', 'AD']:
-            for date_from, date_to in date_ranges:
-                logger.info(f"\n📅 Проверка {report_type} данных за {date_from} — {date_to}...")
-                
-                table_name = f"rdl.yandex_direct_{report_type.lower()}_stats"
-                
-                # Проверяем, есть ли уже данные за этот период
-                if check_existing_data(db_config, date_from, date_to, table_name):
-                    logger.info(f"⏩ {report_type} данные уже загружены, пропускаем...")
-                    continue
-                
-                # Загружаем данные, если их нет
-                report_data, table_name = get_direct_report(token, date_from, date_to, report_type)
-                
-                if report_data:
-                    save_to_postgres(report_data, table_name, db_config)
-                else:
-                    logger.warning(f"⚠ Не удалось получить {report_type} данные за {date_from} — {date_to}")
-                
-                # Пауза 10 секунд между запросами (чтобы не превысить лимиты API)
-                logger.info("⏳ Ожидание 10 секунд...")
-                time.sleep(10)
+        for date_from, date_to in generate_date_ranges(start_date, end_date):
+            logger.info(f"\n📅 Обработка периода {date_from} — {date_to}")
+            
+            if check_existing_data(db_config, date_from, date_to):
+                logger.info("⏩ Данные уже существуют, пропускаем")
+                continue
+            
+            data = get_direct_report(token, date_from, date_to)
+            if data:
+                save_to_postgres(data, db_config)
+            
+            time.sleep(10)  # Пауза между запросами
 
     except Exception as e:
-        logger.error(f"🔥 Критическая ошибка: {str(e)}")
+        logger.critical(f"🔥 Критическая ошибка: {e}")
         sys.exit(1)
     finally:
-        logger.info("\n✅ Выгрузка завершена")
+        logger.info("✅ Скрипт завершил работу")
