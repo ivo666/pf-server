@@ -3,6 +3,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -31,8 +32,7 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES",
-            "IncludeDiscount": "NO",
-            "Types": ["TEXT_AD"]  # Указываем тип объявлений
+            "IncludeDiscount": "NO"
         }
     }
 
@@ -42,7 +42,7 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
             url,
             headers=headers,
             json=body,
-            timeout=30
+            timeout=60
         )
         
         if response.status_code == 200:
@@ -51,17 +51,20 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
             logger.info("Report is being generated, waiting...")
             retry_count = 0
             while retry_count < max_retries:
-                time.sleep(15)
+                wait_time = 30 * (retry_count + 1)
+                logger.info(f"Waiting {wait_time} seconds before retry...")
+                time.sleep(wait_time)
+                
                 download_url = response.headers.get('Location')
                 if download_url:
                     logger.info(f"Trying to download report (attempt {retry_count + 1})")
-                    download_response = requests.get(download_url, headers=headers)
+                    download_response = requests.get(download_url, headers=headers, timeout=60)
                     if download_response.status_code == 200:
                         return download_response.text
                     else:
                         logger.warning(f"Download failed: {download_response.status_code}")
                 retry_count += 1
-            logger.error("Max retries reached. Report is not ready.")
+            logger.error(f"Max retries ({max_retries}) reached. Report is not ready.")
             return None
         else:
             logger.error(f"API error: {response.status_code} - {response.text}")
