@@ -50,7 +50,7 @@ def get_direct_report(token, date_from, date_to):
                 "AdId"
                 
             ],
-            "ReportName": "CampaignPerformanceReport",
+            "ReportName": "AdPerformanceReport",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -91,7 +91,7 @@ def save_to_postgres(data, db_config):
                 cost DECIMAL(15, 2),
                 ctr DECIMAL(5, 2),
                 impressions INTEGER,
-                adid BIGINT,
+                ad_id BIGINT,
                 PRIMARY KEY (date, campaign_id)
             )
         """)
