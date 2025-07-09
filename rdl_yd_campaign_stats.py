@@ -32,7 +32,7 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
                 "DateTo": date
             },
             "FieldNames": ["Date", "CampaignId", "AdId"],
-            "ReportName": report_name,  # Уникальное имя
+            "ReportName": "report_1",  # Уникальное имя
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
