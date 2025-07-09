@@ -6,10 +6,11 @@ from pathlib import Path
 import sys
 import time
 import logging
+import json
 
 # Настройка логирования
 logging.basicConfig(
-    level=logging.DEBUG,  # Временный DEBUG для диагностики
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('/var/log/yandex_direct_stats.log'),
@@ -31,9 +32,7 @@ def get_direct_report(token, date_from, date_to):
         "Accept-Language": "ru",
         "Content-Type": "application/json",
         "processingMode": "auto",
-        "skipReportHeader": "true",
-        "skipColumnHeader": "true",
-        "skipReportSummary": "true"
+        "returnMoneyInMicros": "false"
     }
 
     report_body = {
@@ -52,7 +51,6 @@ def get_direct_report(token, date_from, date_to):
                 "Ctr",
                 "Impressions"
             ],
-            "ReportName": "CustomReport",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -62,8 +60,8 @@ def get_direct_report(token, date_from, date_to):
     }
 
     try:
-        logger.info(f"Запрос данных за {date_from} — {date_to}")
-        logger.debug(f"Тело запроса: {report_body}")  # Логируем тело запроса
+        logger.info(f"Формирование отчета за {date_from} — {date_to}")
+        logger.debug(f"Запрос: {json.dumps(report_body, indent=2)}")
         
         response = requests.post(
             url,
@@ -72,25 +70,44 @@ def get_direct_report(token, date_from, date_to):
             timeout=60
         )
         
-        logger.debug(f"Статус ответа: {response.status_code}")
-        logger.debug(f"Тело ответа: {response.text[:500]}")  # Логируем часть ответа
+        logger.debug(f"Статус: {response.status_code}")
+        logger.debug(f"Ответ: {response.text[:500]}...")
         
-        response.raise_for_status()
-        
-        if not response.text.strip():
-            logger.error("Пустой ответ от API")
+        if response.status_code == 201:
+            # Для асинхронных отчетов нужно получить URL для скачивания
+            download_url = response.headers.get('Location')
+            if download_url:
+                logger.info("Отчет формируется, ожидаем...")
+                time.sleep(30)  # Даем время на формирование отчета
+                return download_report(download_url, headers)
+            else:
+                logger.error("Не получен URL для скачивания отчета")
+                return None
+        elif response.status_code == 200:
+            return response.text
+        else:
+            response.raise_for_status()
             return None
             
-        return response.text
-        
     except requests.exceptions.RequestException as e:
         logger.error(f"Ошибка запроса: {str(e)}")
         if hasattr(e, 'response') and e.response:
-            logger.error(f"Код ошибки: {e.response.status_code}")
-            logger.error(f"Тело ошибки: {e.response.text}")
+            logger.error(f"Детали ошибки: {e.response.text}")
+        return None
+
+def download_report(url, headers):
+    try:
+        response = requests.get(url, headers=headers, timeout=60)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Ошибка загрузки отчета: {str(e)}")
         return None
 
 def save_to_postgres(data, db_config):
+    if not data:
+        return
+
     conn = None
     try:
         conn = psycopg2.connect(
@@ -125,7 +142,7 @@ def save_to_postgres(data, db_config):
                 
             values = line.split('\t')
             if len(values) != 8:
-                logger.warning(f"Неверное количество полей ({len(values)}): {line}")
+                logger.warning(f"Пропущена строка: {line}")
                 continue
                 
             try:
@@ -135,22 +152,22 @@ def save_to_postgres(data, db_config):
                     )
                     ON CONFLICT (date, campaign_id, ad_id) DO NOTHING
                 """, (
-                    values[0].strip(),          # Date
-                    int(values[1]),             # CampaignId
-                    values[2].strip(),          # CampaignName
-                    int(values[3]),             # AdId
-                    int(values[4]),             # Clicks
-                    float(values[5]) / 1000000, # Cost
-                    float(values[6]),           # Ctr
-                    int(values[7])              # Impressions
+                    values[0].strip(),
+                    int(values[1]),
+                    values[2].strip(),
+                    int(values[3]),
+                    int(values[4]),
+                    float(values[5]) / 1000000,
+                    float(values[6]),
+                    int(values[7])
                 ))
                 processed_rows += 1
             except (ValueError, IndexError) as e:
-                logger.warning(f"Ошибка обработки строки: {line} | {str(e)}")
+                logger.warning(f"Ошибка строки {line}: {str(e)}")
                 continue
 
         conn.commit()
-        logger.info(f"Загружено строк: {processed_rows}")
+        logger.info(f"Загружено {processed_rows} строк")
         
     except Exception as e:
         logger.error(f"Ошибка БД: {str(e)}")
@@ -167,7 +184,7 @@ def generate_date_ranges(start_date, end_date):
     ranges = []
     
     while current <= end:
-        next_date = min(current + timedelta(days=6), end)
+        next_date = min(current + timedelta(days=1), end)  # Уменьшили интервал до 1 дня
         ranges.append((
             current.strftime("%Y-%m-%d"),
             next_date.strftime("%Y-%m-%d")
@@ -176,61 +193,31 @@ def generate_date_ranges(start_date, end_date):
     
     return ranges
 
-def check_existing_data(db_config, date_from, date_to):
-    conn = None
-    try:
-        conn = psycopg2.connect(
-            host=db_config['HOST'],
-            database=db_config['DATABASE'],
-            user=db_config['USER'],
-            password=db_config['PASSWORD'],
-            port=db_config['PORT']
-        )
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT EXISTS (
-                SELECT 1 FROM rdl.yandex_direct_stats
-                WHERE date BETWEEN %s AND %s
-                LIMIT 1
-            )
-        """, (date_from, date_to))
-        return cur.fetchone()[0]
-    except Exception as e:
-        logger.error(f"Ошибка проверки данных: {str(e)}")
-        return False
-    finally:
-        if conn:
-            conn.close()
-
 if __name__ == "__main__":
     try:
         config = load_config()
         token = config['YandexDirect']['ACCESS_TOKEN']
         db_config = config['Database']
 
-        # Тестовый период (уменьшен для диагностики)
+        # Тестовый период - 1 день
         start_date = "2025-06-10"
-        end_date = "2025-06-11"  # Всего 1 день для теста
+        end_date = "2025-06-10"
 
-        logger.info(f"Начало выгрузки с {start_date} по {end_date}")
+        logger.info(f"Старт выгрузки с {start_date} по {end_date}")
         
         for date_from, date_to in generate_date_ranges(start_date, end_date):
-            logger.info(f"\nПериод: {date_from} — {date_to}")
+            logger.info(f"\nОбработка: {date_from} — {date_to}")
             
-            if check_existing_data(db_config, date_from, date_to):
-                logger.info("Данные уже есть, пропускаем")
-                continue
-                
             data = get_direct_report(token, date_from, date_to)
             if data:
                 save_to_postgres(data, db_config)
             else:
                 logger.error("Не удалось получить данные")
                 
-            time.sleep(5)  # Уменьшенная пауза для теста
+            time.sleep(5)
 
     except Exception as e:
-        logger.critical(f"Критическая ошибка: {str(e)}")
+        logger.critical(f"Фатальная ошибка: {str(e)}")
         sys.exit(1)
     finally:
-        logger.info("Выгрузка завершена")
+        logger.info("Процесс завершен")
