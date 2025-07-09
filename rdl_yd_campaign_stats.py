@@ -51,6 +51,7 @@ def get_direct_report(token, date_from, date_to):
                 "Ctr",
                 "Impressions"
             ],
+            "ReportName": "AD_PERFORMANCE_REPORT",  # Добавлено обязательное поле
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -73,18 +74,16 @@ def get_direct_report(token, date_from, date_to):
         logger.debug(f"Статус: {response.status_code}")
         logger.debug(f"Ответ: {response.text[:500]}...")
         
-        if response.status_code == 201:
-            # Для асинхронных отчетов нужно получить URL для скачивания
+        if response.status_code == 200:
+            return response.text
+        elif response.status_code == 201:
             download_url = response.headers.get('Location')
             if download_url:
                 logger.info("Отчет формируется, ожидаем...")
-                time.sleep(30)  # Даем время на формирование отчета
+                time.sleep(30)
                 return download_report(download_url, headers)
-            else:
-                logger.error("Не получен URL для скачивания отчета")
-                return None
-        elif response.status_code == 200:
-            return response.text
+            logger.error("Не получен URL для скачивания")
+            return None
         else:
             response.raise_for_status()
             return None
@@ -184,7 +183,7 @@ def generate_date_ranges(start_date, end_date):
     ranges = []
     
     while current <= end:
-        next_date = min(current + timedelta(days=1), end)  # Уменьшили интервал до 1 дня
+        next_date = min(current + timedelta(days=1), end)
         ranges.append((
             current.strftime("%Y-%m-%d"),
             next_date.strftime("%Y-%m-%d")
