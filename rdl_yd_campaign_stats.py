@@ -26,7 +26,7 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
                 "DateFrom": date,
                 "DateTo": date
             },
-            "FieldNames": ["CampaignId", "AdId"],
+            "FieldNames": ["Date", "CampaignId", "AdId"],  # Добавлено Date
             "ReportName": "campaign_and_ad_ids_report",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
@@ -80,17 +80,17 @@ def print_campaign_and_ad_ids(data):
         return
     
     print("\nCampaign and Ad IDs Report:")
-    print("=" * 60)
-    print("{:<15} | {:<15}".format("Campaign ID", "Ad ID"))
-    print("=" * 60)
+    print("=" * 80)
+    print("{:<12} | {:<15} | {:<15}".format("Date", "Campaign ID", "Ad ID"))
+    print("=" * 80)
     
     for line in data.split('\n'):
-        if line.strip() and not line.startswith(('"', 'CampaignId', 'Total')):
+        if line.strip() and not line.startswith(('"', 'Date', 'Total')):
             parts = line.strip().split('\t')
-            if len(parts) >= 2:
-                print("{:<15} | {:<15}".format(parts[0], parts[1]))
+            if len(parts) >= 3:
+                print("{:<12} | {:<15} | {:<15}".format(parts[0], parts[1], parts[2]))
     
-    print("=" * 60)
+    print("=" * 80)
 
 if __name__ == "__main__":
     TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"
