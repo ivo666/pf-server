@@ -32,7 +32,7 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
                 "DateTo": date
             },
             "FieldNames": ["Date", "CampaignId", "AdId"],
-            "ReportName": "report_1",  # Уникальное имя
+            "ReportName": report_name,  # Уникальное имя
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -68,6 +68,9 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
                         return download_response.text
                     else:
                         logger.warning(f"Download failed: {download_response.status_code}")
+                else:
+                    logger.warning("Download URL not found.")
+                    break
                 retry_count += 1
             logger.error(f"Max retries ({max_retries}) reached. Report is not ready.")
             return None
@@ -90,7 +93,7 @@ def print_campaign_and_ad_ids(data):
     print("=" * 80)
     
     for line in data.split('\n'):
-        if line.strip() and not line.startswith(('"', 'Date', 'Total')):
+        if line.strip() and not line.startswith(('Date', 'Total')):
             parts = line.strip().split('\t')
             if len(parts) >= 3:
                 print("{:<12} | {:<15} | {:<15}".format(parts[0], parts[1], parts[2]))
