@@ -25,8 +25,8 @@ def get_campaign_ids(token, date):
         "params": {
             "SelectionCriteria": {"DateFrom": date, "DateTo": date},
             "FieldNames": ["CampaignId"],
-            "ReportName": "campaign_ids",
-            "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",
+            "ReportName": "ad_ids",
+            "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES",
