@@ -1,138 +1,236 @@
+import requests
+import logging
+import time
+import hashlib
 import configparser
 import psycopg2
 from datetime import datetime, timedelta
-import logging
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 logger = logging.getLogger(__name__)
 
-def load_config(filename='config.ini'):
-    """Загружает конфигурацию из файла"""
-    config = configparser.ConfigParser()
-    config.read(filename)
-    return config['Database']
+class YandexDirectWeeklyLoader:
+    def __init__(self, config_file='config.ini'):
+        self.config_file = config_file
+        self.token = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"
+        self.conn = None
+        self.start_date = datetime(2025, 1, 1).date()
+        self.end_date = (datetime.now() - timedelta(days=1)).date()
 
-def connect_to_db(config):
-    """Устанавливает соединение с базой данных"""
-    try:
-        conn = psycopg2.connect(
-            host=config['HOST'],
-            database=config['DATABASE'],
-            user=config['USER'],
-            password=config['PASSWORD'],
-            port=config['PORT']
-        )
-        logger.info("Successfully connected to the database")
-        return conn
-    except Exception as e:
-        logger.error(f"Error connecting to the database: {e}")
-        raise
+    def get_db_connection(self):
+        """Устанавливает соединение с PostgreSQL"""
+        config = configparser.ConfigParser()
+        config.read(self.config_file)
+        
+        try:
+            self.conn = psycopg2.connect(
+                host=config['Database']['HOST'],
+                database=config['Database']['DATABASE'],
+                user=config['Database']['USER'],
+                password=config['Database']['PASSWORD'],
+                port=config['Database']['PORT']
+            )
+            logger.info("Успешное подключение к PostgreSQL")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка подключения к БД: {str(e)}")
+            return False
 
-def data_exists(conn, date, campaign_id, ad_id):
-    """Проверяет существование данных в базе"""
-    with conn.cursor() as cursor:
+    def check_table_exists(self):
+        """Проверяет существование целевой таблицы"""
         check_query = """
         SELECT EXISTS (
-            SELECT 1 FROM rdl.yandex_direct_stats 
-            WHERE date = %s AND campaign_id = %s AND ad_id = %s
-        )
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_schema = 'rdl' 
+            AND table_name = 'yandex_direct_stats'
+        );
         """
-        cursor.execute(check_query, (date, campaign_id, ad_id))
-        return cursor.fetchone()[0]
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute(check_query)
+                exists = cursor.fetchone()[0]
+                if not exists:
+                    logger.error("Таблица rdl.yandex_direct_stats не существует!")
+                return exists
+        except Exception as e:
+            logger.error(f"Ошибка проверки таблицы: {str(e)}")
+            return False
 
-def insert_campaign_data(conn, campaign_data):
-    """Вставляет данные кампании в базу"""
-    with conn.cursor() as cursor:
-        insert_query = """
-        INSERT INTO rdl.yandex_direct_stats (date, campaign_id, ad_id, clicks, cost, impressions)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        cursor.execute(insert_query, campaign_data)
-        conn.commit()
+    def get_weekly_report(self, week_start, week_end):
+        """Получает отчет за неделю"""
+        url = "https://api.direct.yandex.com/json/v5/reports"
+        
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Accept-Language": "ru",
+            "Content-Type": "application/json"
+        }
 
-def print_campaign_stats(conn, data):
-    """Выводит статистику кампаний и сохраняет в базу"""
-    if not data:
-        print("No data received")
-        return
-    
-    print("\nCampaign Performance Report:")
-    print("=" * 120)
-    print("{:<12} | {:<12} | {:<30} | {:<12} | {:<8} | {:<12} | {:<12}".format(
-        "Date", "Campaign ID", "Ad ID", "Clicks", "Cost", "Impressions"
-    ))
-    print("=" * 120)
-    
-    for line in data.split('\n'):
-        if line.strip() and not line.startswith(('Date', 'Total')):
-            parts = line.strip().split('\t')
-            if len(parts) >= 6:  # Убедитесь, что есть все необходимые поля
-                date = parts[0]
-                campaign_id = parts[1]
-                ad_id = parts[3]
-                clicks = int(parts[4])
-                impressions = int(parts[5])
-                cost = float(parts[6])
-                
-                # Проверяем наличие данных перед вставкой
-                if not data_exists(conn, date, campaign_id, ad_id):
-                    campaign_data = (date, campaign_id, ad_id, clicks, cost, impressions)
-                    insert_campaign_data(conn, campaign_data)
+        report_name = f"weekly_{week_start.strftime('%Y%m%d')}_to_{week_end.strftime('%Y%m%d')}"
 
-                    print("{:<12} | {:<12} | {:<30} | {:<12} | {:<8} | {:<12} | {:<12}".format(
-                        date, campaign_id, ad_id, clicks, f"{cost:.2f}", impressions
-                    ))
-                else:
-                    logger.info(f"Data for date {date}, campaign {campaign_id}, ad {ad_id} already exists. Skipping.")
+        body = {
+            "params": {
+                "SelectionCriteria": {
+                    "DateFrom": week_start.strftime("%Y-%m-%d"),
+                    "DateTo": week_end.strftime("%Y-%m-%d")
+                },
+                "FieldNames": [
+                    "Date",
+                    "CampaignId",
+                    "CampaignName",
+                    "AdId",
+                    "Clicks",
+                    "Impressions",
+                    "Cost"
+                ],
+                "ReportName": report_name,
+                "ReportType": "AD_PERFORMANCE_REPORT",
+                "DateRangeType": "CUSTOM_DATE",
+                "Format": "TSV",
+                "IncludeVAT": "YES",
+                "IncludeDiscount": "NO"
+            }
+        }
 
-    print("=" * 120)
-
-def get_data_from_yandex_direct(start_date, end_date):
-    """Получает данные из Яндекс.Директ (заглушка)"""
-    # Здесь должна быть реализация получения данных из Яндекс.Директ
-    # Должна возвращать данные в формате строки (например, табуляция разделяет поля)
-    logger.warning("Using stub function for Yandex Direct data")
-    return None
-
-def main():
-    """Основная функция выполнения скрипта"""
-    TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"
-    start_date = datetime(2025, 1, 1)
-
-    logger.info(f"Starting report from {start_date}")
-
-    # Загрузка конфигурации
-    config = load_config()
-    
-    # Подключение к базе данных
-    conn = None
-    try:
-        conn = connect_to_db(config)
-
-        # Получаем данные по неделям начиная с 01.01.2025
-        current_date = start_date
-        while current_date <= datetime.now():
-            week_end_date = current_date + timedelta(days=6)
-            data = get_data_from_yandex_direct(
-                current_date.strftime("%Y-%m-%d"), 
-                week_end_date.strftime("%Y-%m-%d")
+        try:
+            logger.info(f"Запрос данных за период: {week_start} - {week_end}")
+            response = requests.post(
+                url,
+                headers=headers,
+                json=body,
+                timeout=60
             )
             
-            if data:
-                print_campaign_stats(conn, data)
+            if response.status_code == 200:
+                return response.text
+            elif response.status_code == 201:
+                logger.info("Отчет формируется, ожидание...")
+                time.sleep(30)
+                return self.get_weekly_report(week_start, week_end)
             else:
-                logger.error(f"Failed to get data for week starting {current_date}")
+                logger.error(f"Ошибка API: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка запроса: {str(e)}")
+            return None
 
-            current_date += timedelta(days=7)
-    
-        logger.info("Script finished")
-    
-    except Exception as e:
-        logger.error(f"Error in main execution: {e}")
-    finally:
-        if conn:
-            conn.close()
+    def parse_tsv_data(self, tsv_data):
+        """Парсит TSV данные"""
+        try:
+            lines = [line for line in tsv_data.split('\n') if line.strip() and not line.startswith('Date\t')]
+            
+            data = []
+            for line in lines:
+                parts = line.strip().split('\t')
+                if len(parts) >= 7:
+                    try:
+                        record = (
+                            parts[0],  # Date
+                            int(parts[1]),  # CampaignId
+                            parts[2],  # CampaignName
+                            int(parts[3]),  # AdId
+                            int(parts[4]) if parts[4] else 0,  # Clicks
+                            int(parts[5]) if parts[5] else 0,  # Impressions
+                            float(parts[6]) / 1000000 if parts[6] else 0.0  # Cost (convert to RUB)
+                        )
+                        data.append(record)
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Пропуск строки: {line}. Ошибка: {str(e)}")
+                        continue
+            
+            return data
+        except Exception as e:
+            logger.error(f"Ошибка парсинга данных: {str(e)}")
+            return None
+
+    def save_weekly_data(self, data):
+        """Сохраняет недельные данные в БД"""
+        if not data:
+            logger.warning("Нет данных для сохранения")
+            return False
+        
+        insert_query = """
+        INSERT INTO rdl.yandex_direct_stats 
+        (date, campaign_id, campaign_name, ad_id, clicks, impressions, cost)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (date, campaign_id, ad_id) DO UPDATE SET
+            campaign_name = EXCLUDED.campaign_name,
+            clicks = EXCLUDED.clicks,
+            impressions = EXCLUDED.impressions,
+            cost = EXCLUDED.cost;
+        """
+        
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.executemany(insert_query, data)
+                self.conn.commit()
+                logger.info(f"Успешно загружено {len(data)} записей за неделю")
+                print(f"Успешно загружен пакет данных: {len(data)} записей")  # Явное сообщение в терминал
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка сохранения данных: {str(e)}")
+            self.conn.rollback()
+            return False
+
+    def process_weekly_data(self):
+        """Обрабатывает данные по неделям"""
+        current_week_start = self.start_date
+        total_records = 0
+        
+        while current_week_start <= self.end_date:
+            week_end = min(current_week_start + timedelta(days=6), self.end_date)
+            
+            logger.info(f"Обработка недели: {current_week_start} - {week_end}")
+            
+            # Получаем данные за неделю
+            tsv_data = self.get_weekly_report(current_week_start, week_end)
+            if not tsv_data:
+                logger.warning(f"Нет данных за неделю {current_week_start} - {week_end}")
+                current_week_start += timedelta(days=7)
+                continue
+            
+            # Парсим данные
+            parsed_data = self.parse_tsv_data(tsv_data)
+            if not parsed_data:
+                logger.warning(f"Не удалось распарсить данные за неделю {current_week_start} - {week_end}")
+                current_week_start += timedelta(days=7)
+                continue
+            
+            # Сохраняем в БД
+            if self.save_weekly_data(parsed_data):
+                total_records += len(parsed_data)
+            
+            current_week_start += timedelta(days=7)
+        
+        return total_records
+
+    def run(self):
+        """Основной метод запуска загрузки"""
+        try:
+            if not self.get_db_connection():
+                return False
+            
+            if not self.check_table_exists():
+                return False
+            
+            total = self.process_weekly_data()
+            
+            logger.info(f"Загрузка завершена. Всего загружено записей: {total}")
+            print(f"Загрузка завершена. Всего загружено: {total} записей")  # Финал
+            
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка в процессе загрузки: {str(e)}")
+            return False
+        finally:
+            if self.conn:
+                self.conn.close()
 
 if __name__ == "__main__":
-    main()
+    loader = YandexDirectWeeklyLoader()
+    loader.run()
