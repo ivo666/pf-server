@@ -3,7 +3,6 @@ import logging
 import time
 from datetime import datetime, timedelta
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -11,7 +10,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_campaign_and_ad_ids(token, date, max_retries=5):
+def get_campaign_and_ad_ids(token, date, max_retries=3):
     url = "https://api.direct.yandex.com/json/v5/reports"
     
     headers = {
@@ -24,8 +23,7 @@ def get_campaign_and_ad_ids(token, date, max_retries=5):
         "params": {
             "SelectionCriteria": {
                 "DateFrom": date,
-                "DateTo": date,
-                "Types": ["TEXT_AD"]  # Правильное расположение
+                "DateTo": date
             },
             "FieldNames": ["CampaignId", "AdId"],
             "ReportName": "campaign_and_ad_ids_report",
@@ -33,7 +31,8 @@ def get_campaign_and_ad_ids(token, date, max_retries=5):
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES",
-            "IncludeDiscount": "NO"
+            "IncludeDiscount": "NO",
+            "Types": ["TEXT_AD"]  # Указываем тип объявлений
         }
     }
 
@@ -43,7 +42,7 @@ def get_campaign_and_ad_ids(token, date, max_retries=5):
             url,
             headers=headers,
             json=body,
-            timeout=60
+            timeout=30
         )
         
         if response.status_code == 200:
@@ -52,20 +51,17 @@ def get_campaign_and_ad_ids(token, date, max_retries=5):
             logger.info("Report is being generated, waiting...")
             retry_count = 0
             while retry_count < max_retries:
-                wait_time = 30 * (retry_count + 1)  # Увеличиваем время ожидания с каждой попыткой
-                logger.info(f"Waiting {wait_time} seconds before retry...")
-                time.sleep(wait_time)
-                
+                time.sleep(15)
                 download_url = response.headers.get('Location')
                 if download_url:
                     logger.info(f"Trying to download report (attempt {retry_count + 1})")
-                    download_response = requests.get(download_url, headers=headers, timeout=60)
+                    download_response = requests.get(download_url, headers=headers)
                     if download_response.status_code == 200:
                         return download_response.text
                     else:
                         logger.warning(f"Download failed: {download_response.status_code}")
                 retry_count += 1
-            logger.error(f"Max retries ({max_retries}) reached. Report is not ready.")
+            logger.error("Max retries reached. Report is not ready.")
             return None
         else:
             logger.error(f"API error: {response.status_code} - {response.text}")
