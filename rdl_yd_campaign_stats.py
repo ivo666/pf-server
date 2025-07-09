@@ -21,20 +21,21 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
     }
 
     body = {
-        "params": {
-            "SelectionCriteria": {
-                "DateFrom": date,
-                "DateTo": date
-            },
-            "FieldNames": ["CampaignId", "AdId"],  # Запрашиваем оба поля
-            "ReportName": "campaign_and_ad_ids_report",
-            "ReportType": "AD_PERFORMANCE_REPORT",
-            "DateRangeType": "CUSTOM_DATE",
-            "Format": "TSV",
-            "IncludeVAT": "YES",
-            "IncludeDiscount": "NO"
-        }
+    "params": {
+        "SelectionCriteria": {
+            "DateFrom": date,
+            "DateTo": date
+        },
+        "FieldNames": ["CampaignId", "AdId"],
+        "ReportName": "campaign_and_ad_ids_report",
+        "ReportType": "AD_PERFORMANCE_REPORT",
+        "DateRangeType": "CUSTOM_DATE",
+        "Format": "TSV",
+        "IncludeVAT": "YES",
+        "IncludeDiscount": "NO",
+        "Types": ["TEXT_AD"]  # Ключевое добавление!
     }
+}
 
     try:
         logger.info(f"Requesting Campaign and Ad IDs for {date}")
