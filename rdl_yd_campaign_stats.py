@@ -46,10 +46,12 @@ def get_direct_report(token, date_from, date_to):
                 "Clicks",
                 "Cost",
                 "Ctr",
-                "Impressions"
+                "Impressions", 
+                "AdId"
+                
             ],
             "ReportName": "CampaignPerformanceReport",
-            "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",
+            "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES"
@@ -89,6 +91,7 @@ def save_to_postgres(data, db_config):
                 cost DECIMAL(15, 2),
                 ctr DECIMAL(5, 2),
                 impressions INTEGER,
+                adid BIGINT,
                 PRIMARY KEY (date, campaign_id)
             )
         """)
@@ -108,7 +111,7 @@ def save_to_postgres(data, db_config):
             try:
                 cur.execute("""
                     INSERT INTO rdl.yandex_direct_stats VALUES (
-                        %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (date, campaign_id) DO NOTHING
                 """, (
@@ -118,7 +121,8 @@ def save_to_postgres(data, db_config):
                     int(values[3]),             # Clicks
                     float(values[4]) / 1000000, # Cost (переводим микроединицы в рубли)
                     float(values[5]),           # Ctr
-                    int(values[6])              # Impressions
+                    int(values[6]),              # Impressions
+                    int(values[7])             # AdId
                 ))
                 if cur.rowcount > 0:
                     processed_rows += 1
