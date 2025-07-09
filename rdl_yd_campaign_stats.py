@@ -25,7 +25,7 @@ def get_ad_ids(token, date):
                 "DateFrom": date,
                 "DateTo": date
             },
-            "FieldNames": ["AdId", "CampaignId", "AdName"],
+            "FieldNames": ["CampaignId"],
             "ReportName": "ad_ids_report",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
