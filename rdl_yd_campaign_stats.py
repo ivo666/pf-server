@@ -33,8 +33,7 @@ def get_direct_report(token, date_from, date_to):
     }
 
     report_body = {
-        "method": "get",
-        "params": {
+        "params": {  # Убрали "method": "get" - в API v5 это не используется
             "SelectionCriteria": {
                 "DateFrom": date_from,
                 "DateTo": date_to
@@ -43,18 +42,18 @@ def get_direct_report(token, date_from, date_to):
                 "Date",
                 "CampaignId", 
                 "CampaignName",
+                "AdId",  # Перенесли AdId выше, чтобы соответствовать порядку полей в ответе
                 "Clicks",
                 "Cost",
                 "Ctr",
-                "Impressions", 
-                "AdId"
-                
+                "Impressions"
             ],
-            "ReportName": "AdPerformanceReport",
+            "ReportName": "AD_PERFORMANCE_REPORT",  # Исправлено название
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
-            "IncludeVAT": "YES"
+            "IncludeVAT": "YES",
+            "IncludeDiscount": "NO"  # Добавили обязательный параметр
         }
     }
 
@@ -81,18 +80,18 @@ def save_to_postgres(data, db_config):
         )
         cur = conn.cursor()
 
-        # Создаем таблицу в слое rdl, если не существует
+        # Обновили структуру таблицы
         cur.execute("""
             CREATE TABLE IF NOT EXISTS rdl.yandex_direct_stats (
                 date DATE,
                 campaign_id BIGINT,
                 campaign_name TEXT,
+                ad_id BIGINT,  # Перенесли ad_id выше
                 clicks INTEGER,
                 cost DECIMAL(15, 2),
                 ctr DECIMAL(5, 2),
                 impressions INTEGER,
-                ad_id BIGINT,
-                PRIMARY KEY (date, campaign_id)
+                PRIMARY KEY (date, campaign_id, ad_id)  # Добавили ad_id в первичный ключ
             )
         """)
 
@@ -104,7 +103,7 @@ def save_to_postgres(data, db_config):
                 continue
                 
             values = line.split('\t')
-            if len(values) != 7:
+            if len(values) != 8:  # Теперь ожидаем 8 полей
                 logger.warning(f"⚠ Пропущена строка (неверное кол-во полей): {line}")
                 continue
                 
@@ -113,16 +112,16 @@ def save_to_postgres(data, db_config):
                     INSERT INTO rdl.yandex_direct_stats VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s
                     )
-                    ON CONFLICT (date, campaign_id) DO NOTHING
+                    ON CONFLICT (date, campaign_id, ad_id) DO NOTHING  # Обновили условие конфликта
                 """, (
                     values[0].strip(),          # Date
                     int(values[1]),             # CampaignId
                     values[2].strip(),          # CampaignName
-                    int(values[3]),             # Clicks
-                    float(values[4]) / 1000000, # Cost (переводим микроединицы в рубли)
-                    float(values[5]),           # Ctr
-                    int(values[6]),              # Impressions
-                    int(values[7])             # AdId
+                    int(values[3]),             # AdId
+                    int(values[4]),             # Clicks
+                    float(values[5]) / 1000000, # Cost
+                    float(values[6]),           # Ctr
+                    int(values[7])              # Impressions
                 ))
                 if cur.rowcount > 0:
                     processed_rows += 1
