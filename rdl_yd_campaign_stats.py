@@ -9,7 +9,7 @@ import logging
 
 # Настройка логирования
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Временный DEBUG для диагностики
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('/var/log/yandex_direct_stats.log'),
@@ -29,43 +29,65 @@ def get_direct_report(token, date_from, date_to):
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "processingMode": "auto",
+        "skipReportHeader": "true",
+        "skipColumnHeader": "true",
+        "skipReportSummary": "true"
     }
 
     report_body = {
-        "params": {  # Убрали "method": "get" - в API v5 это не используется
+        "params": {
             "SelectionCriteria": {
                 "DateFrom": date_from,
                 "DateTo": date_to
             },
             "FieldNames": [
                 "Date",
-                "CampaignId", 
+                "CampaignId",
                 "CampaignName",
-                "AdId",  # Перенесли AdId выше, чтобы соответствовать порядку полей в ответе
+                "AdId",
                 "Clicks",
                 "Cost",
                 "Ctr",
                 "Impressions"
             ],
-            "ReportName": "AD_PERFORMANCE_REPORT",  # Исправлено название
+            "ReportName": "CustomReport",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES",
-            "IncludeDiscount": "NO"  # Добавили обязательный параметр
+            "IncludeDiscount": "NO"
         }
     }
 
     try:
-        logger.info(f"🔄 Загрузка данных за период {date_from} — {date_to}...")
-        response = requests.post(url, headers=headers, json=report_body, timeout=60)
+        logger.info(f"Запрос данных за {date_from} — {date_to}")
+        logger.debug(f"Тело запроса: {report_body}")  # Логируем тело запроса
+        
+        response = requests.post(
+            url,
+            headers=headers,
+            json=report_body,
+            timeout=60
+        )
+        
+        logger.debug(f"Статус ответа: {response.status_code}")
+        logger.debug(f"Тело ответа: {response.text[:500]}")  # Логируем часть ответа
+        
         response.raise_for_status()
+        
+        if not response.text.strip():
+            logger.error("Пустой ответ от API")
+            return None
+            
         return response.text
+        
     except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Ошибка API: {e}")
+        logger.error(f"Ошибка запроса: {str(e)}")
         if hasattr(e, 'response') and e.response:
-            logger.error(f"Тело ответа: {e.response.text}")
+            logger.error(f"Код ошибки: {e.response.status_code}")
+            logger.error(f"Тело ошибки: {e.response.text}")
         return None
 
 def save_to_postgres(data, db_config):
@@ -80,18 +102,17 @@ def save_to_postgres(data, db_config):
         )
         cur = conn.cursor()
 
-        # Обновили структуру таблицы
         cur.execute("""
             CREATE TABLE IF NOT EXISTS rdl.yandex_direct_stats (
                 date DATE,
                 campaign_id BIGINT,
                 campaign_name TEXT,
-                ad_id BIGINT,  # Перенесли ad_id выше
+                ad_id BIGINT,
                 clicks INTEGER,
                 cost DECIMAL(15, 2),
                 ctr DECIMAL(5, 2),
                 impressions INTEGER,
-                PRIMARY KEY (date, campaign_id, ad_id)  # Добавили ad_id в первичный ключ
+                PRIMARY KEY (date, campaign_id, ad_id)
             )
         """)
 
@@ -99,12 +120,12 @@ def save_to_postgres(data, db_config):
         processed_rows = 0
         
         for line in lines:
-            if not line.strip() or line.startswith('"') or line.startswith('Date\t') or line.startswith('Total rows:'):
+            if not line.strip() or line.startswith(('"', 'Date\t', 'Total rows:')):
                 continue
                 
             values = line.split('\t')
-            if len(values) != 8:  # Теперь ожидаем 8 полей
-                logger.warning(f"⚠ Пропущена строка (неверное кол-во полей): {line}")
+            if len(values) != 8:
+                logger.warning(f"Неверное количество полей ({len(values)}): {line}")
                 continue
                 
             try:
@@ -112,7 +133,7 @@ def save_to_postgres(data, db_config):
                     INSERT INTO rdl.yandex_direct_stats VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s
                     )
-                    ON CONFLICT (date, campaign_id, ad_id) DO NOTHING  # Обновили условие конфликта
+                    ON CONFLICT (date, campaign_id, ad_id) DO NOTHING
                 """, (
                     values[0].strip(),          # Date
                     int(values[1]),             # CampaignId
@@ -123,17 +144,16 @@ def save_to_postgres(data, db_config):
                     float(values[6]),           # Ctr
                     int(values[7])              # Impressions
                 ))
-                if cur.rowcount > 0:
-                    processed_rows += 1
+                processed_rows += 1
             except (ValueError, IndexError) as e:
-                logger.warning(f"⚠ Пропущена строка: {line} | Ошибка: {str(e)}")
+                logger.warning(f"Ошибка обработки строки: {line} | {str(e)}")
                 continue
 
         conn.commit()
-        logger.info(f"✅ Успешно загружено {processed_rows} строк")
+        logger.info(f"Загружено строк: {processed_rows}")
         
     except Exception as e:
-        logger.error(f"❌ Ошибка БД: {str(e)}")
+        logger.error(f"Ошибка БД: {str(e)}")
         if conn:
             conn.rollback()
         raise
@@ -141,26 +161,22 @@ def save_to_postgres(data, db_config):
         if conn:
             conn.close()
 
-def generate_weekly_ranges(start_date, end_date):
-    """Разбивает период на недельные интервалы"""
-    current_date = datetime.strptime(start_date, "%Y-%m-%d")
-    end_date = datetime.strptime(end_date, "%Y-%m-%d")
-    date_ranges = []
+def generate_date_ranges(start_date, end_date):
+    current = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    ranges = []
     
-    while current_date < end_date:
-        next_date = current_date + timedelta(days=6)  # Неделя = 7 дней (от current_date до next_date)
-        if next_date > end_date:
-            next_date = end_date
-        date_ranges.append((
-            current_date.strftime("%Y-%m-%d"),
+    while current <= end:
+        next_date = min(current + timedelta(days=6), end)
+        ranges.append((
+            current.strftime("%Y-%m-%d"),
             next_date.strftime("%Y-%m-%d")
         ))
-        current_date = next_date + timedelta(days=1)  # Следующая неделя начинается со следующего дня
+        current = next_date + timedelta(days=1)
     
-    return date_ranges
+    return ranges
 
 def check_existing_data(db_config, date_from, date_to):
-    """Проверяет, есть ли уже данные за указанный период"""
     conn = None
     try:
         conn = psycopg2.connect(
@@ -171,20 +187,16 @@ def check_existing_data(db_config, date_from, date_to):
             port=db_config['PORT']
         )
         cur = conn.cursor()
-
         cur.execute("""
             SELECT EXISTS (
-                SELECT 1 FROM rdl.yandex_direct_stats 
+                SELECT 1 FROM rdl.yandex_direct_stats
                 WHERE date BETWEEN %s AND %s
                 LIMIT 1
             )
         """, (date_from, date_to))
-        
-        exists = cur.fetchone()[0]
-        return exists
-        
+        return cur.fetchone()[0]
     except Exception as e:
-        logger.warning(f"⚠ Ошибка при проверке данных: {str(e)}")
+        logger.error(f"Ошибка проверки данных: {str(e)}")
         return False
     finally:
         if conn:
@@ -196,35 +208,29 @@ if __name__ == "__main__":
         token = config['YandexDirect']['ACCESS_TOKEN']
         db_config = config['Database']
 
-        # Указываем период за 2025 год (или любой другой)
+        # Тестовый период (уменьшен для диагностики)
         start_date = "2025-06-10"
-        end_date = "2025-06-24"
+        end_date = "2025-06-11"  # Всего 1 день для теста
 
-        # Разбиваем на недельные интервалы
-        date_ranges = generate_weekly_ranges(start_date, end_date)
-
-        for date_from, date_to in date_ranges:
-            logger.info(f"\n📅 Проверка данных за {date_from} — {date_to}...")
+        logger.info(f"Начало выгрузки с {start_date} по {end_date}")
+        
+        for date_from, date_to in generate_date_ranges(start_date, end_date):
+            logger.info(f"\nПериод: {date_from} — {date_to}")
             
-            # Проверяем, есть ли уже данные за этот период
             if check_existing_data(db_config, date_from, date_to):
-                logger.info(f"⏩ Данные уже загружены, пропускаем...")
+                logger.info("Данные уже есть, пропускаем")
                 continue
-            
-            # Загружаем данные, если их нет
-            report_data = get_direct_report(token, date_from, date_to)
-            
-            if report_data:
-                save_to_postgres(report_data, db_config)
+                
+            data = get_direct_report(token, date_from, date_to)
+            if data:
+                save_to_postgres(data, db_config)
             else:
-                logger.warning(f"⚠ Не удалось получить данные за {date_from} — {date_to}")
-            
-            # Пауза 10 секунд между запросами (чтобы не превысить лимиты API)
-            logger.info("⏳ Ожидание 10 секунд...")
-            time.sleep(10)
+                logger.error("Не удалось получить данные")
+                
+            time.sleep(5)  # Уменьшенная пауза для теста
 
     except Exception as e:
-        logger.error(f"🔥 Критическая ошибка: {str(e)}")
+        logger.critical(f"Критическая ошибка: {str(e)}")
         sys.exit(1)
     finally:
-        logger.info("\n✅ Выгрузка завершена")
+        logger.info("Выгрузка завершена")
