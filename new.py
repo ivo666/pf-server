@@ -51,15 +51,6 @@ def create_table_if_not_exists(conn):
         cost DECIMAL(15, 2),
         PRIMARY KEY (date, campaign_id, ad_id)
     );
-    
-    COMMENT ON TABLE rdl.yandex_direct_stats IS 'Статистика кампаний Яндекс.Директ';
-    COMMENT ON COLUMN rdl.yandex_direct_stats.date IS 'Дата сбора статистики';
-    COMMENT ON COLUMN rdl.yandex_direct_stats.campaign_id IS 'ID кампании';
-    COMMENT ON COLUMN rdl.yandex_direct_stats.campaign_name IS 'Название кампании';
-    COMMENT ON COLUMN rdl.yandex_direct_stats.ad_id IS 'ID объявления';
-    COMMENT ON COLUMN rdl.yandex_direct_stats.clicks IS 'Количество кликов';
-    COMMENT ON COLUMN rdl.yandex_direct_stats.impressions IS 'Количество показов';
-    COMMENT ON COLUMN rdl.yandex_direct_stats.cost IS 'Стоимость (в валюте кампании)';
     """
     
     try:
@@ -87,7 +78,8 @@ def parse_tsv_data(tsv_data):
                 ad_id = int(parts[3])
                 clicks = int(parts[4]) if parts[4] else 0
                 impressions = int(parts[5]) if parts[5] else 0
-                cost = float(parts[6]) if parts[6] else 0.0
+                # Делим стоимость на 1 000 000 для перевода микроединиц в рубли
+                cost = float(parts[6]) / 1000000 if parts[6] else 0.0
                 
                 data.append((date, campaign_id, campaign_name, ad_id, clicks, impressions, cost))
         
