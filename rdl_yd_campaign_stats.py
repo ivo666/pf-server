@@ -33,11 +33,9 @@ def get_direct_report(token, date_from, date_to):
                 "Clicks",
                 "Cost",
                 "Impressions",
-                "Ctr",
-                "AvgClickPrice",
-                "ConversionRate"
+                "Ctr"
             ],
-            "ReportName": f"Extended report {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "ReportName": f"Campaign report {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -100,16 +98,15 @@ def print_beautiful_report(data):
     rows = [line.split('\t') for line in lines[1:]]
     
     # Форматируем заголовки
-    header_format = "{:<12} | {:<12} | {:<30} | {:<8} | {:<12} | {:<12} | {:<8} | {:<12} | {:<8}"
-    row_format = "{:<12} | {:<12} | {:<30} | {:<8} | {:<12.2f} | {:<12} | {:<8.2f}% | {:<12.2f} | {:<8.2f}%"
+    header_format = "{:<12} | {:<12} | {:<30} | {:<8} | {:<12} | {:<12} | {:<8}"
+    row_format = "{:<12} | {:<12} | {:<30} | {:<8} | {:<12.2f} | {:<12} | {:<8.2f}%"
     
-    print("\n" + "=" * 130)
+    print("\n" + "=" * 100)
     print(header_format.format(
         "Date", "Campaign ID", "Campaign Name", "Clicks", 
-        "Cost (RUB)", "Impressions", "CTR", 
-        "Avg Click Price", "Conv. Rate"
+        "Cost (RUB)", "Impressions", "CTR"
     ))
-    print("=" * 130)
+    print("=" * 100)
     
     for row in rows:
         try:
@@ -120,20 +117,17 @@ def print_beautiful_report(data):
             cost = float(row[4])
             impressions = int(row[5])
             ctr = float(row[6].strip('%')) if row[6] else 0
-            avg_click_price = float(row[7]) if len(row) > 7 else 0
-            conversion_rate = float(row[8].strip('%')) if len(row) > 8 else 0
             
             print(row_format.format(
                 date, campaign_id, campaign_name, clicks,
-                cost, impressions, ctr,
-                avg_click_price, conversion_rate
+                cost, impressions, ctr
             ))
         except (IndexError, ValueError) as e:
             logger.warning(f"Ошибка обработки строки: {row} - {str(e)}")
     
-    print("=" * 130)
+    print("=" * 100)
     print(f"Всего кампаний: {len(rows)}")
-    print("=" * 130 + "\n")
+    print("=" * 100 + "\n")
 
 if __name__ == "__main__":
     try:
