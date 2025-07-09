@@ -1,12 +1,11 @@
 import requests
 import json
-import time
 import logging
 from datetime import datetime, timedelta
 
 # Настройка логирования
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Изменили на DEBUG для подробного лога
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
@@ -17,23 +16,18 @@ def get_direct_report(token, date_from, date_to):
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
-        "Content-Type": "application/json; charset=utf-8"  # Явно указываем кодировку
+        "Content-Type": "application/json"
     }
 
+    # Максимально простой запрос
     report_body = {
         "params": {
             "SelectionCriteria": {
                 "DateFrom": date_from,
                 "DateTo": date_to
             },
-            "FieldNames": [
-                "Date",
-                "AdId",
-                "CampaignId",
-                "Clicks",
-                "Cost"
-            ],
-            "ReportName": "Ad Performance Report",
+            "FieldNames": ["AdId", "Clicks"],
+            "ReportName": "Simple Ad Report",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -43,41 +37,41 @@ def get_direct_report(token, date_from, date_to):
     }
 
     try:
-        logger.info(f"Запрос отчета по объявлениям за период {date_from} — {date_to}")
-        
-        # Явно кодируем тело запроса в UTF-8
-        json_data = json.dumps(report_body, ensure_ascii=False).encode('utf-8')
+        logger.debug(f"Отправляемый запрос: {json.dumps(report_body, indent=2, ensure_ascii=False)}")
         
         response = requests.post(
             url,
             headers=headers,
-            data=json_data,  # Используем data вместо json
+            json=report_body,
             timeout=60
         )
         
+        logger.debug(f"Получен ответ: {response.status_code}")
+        logger.debug(f"Заголовки ответа: {response.headers}")
+        
         if response.status_code == 200:
+            logger.debug("Успешно получен отчет")
             return response.text
         elif response.status_code == 201:
+            logger.debug("Отчет формируется асинхронно")
             download_url = response.headers.get('Location')
             if download_url:
-                logger.info("Отчет формируется, ожидаем 30 секунд...")
-                time.sleep(30)
+                logger.debug(f"URL для загрузки: {download_url}")
                 return download_report(download_url, headers)
-            logger.error("Не получен URL для скачивания")
-            return None
+            else:
+                logger.error("Location header отсутствует в ответе")
+                return None
         else:
-            logger.error(f"Ошибка API: {response.text}")
+            logger.error(f"Ошибка API. Полный ответ: {response.text}")
             return None
             
     except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка запроса: {str(e)}")
-        return None
-    except UnicodeEncodeError as e:
-        logger.error(f"Ошибка кодировки: {str(e)}")
+        logger.error(f"Ошибка соединения: {str(e)}")
         return None
 
 def download_report(url, headers):
     try:
+        logger.debug(f"Загружаем отчет по URL: {url}")
         response = requests.get(url, headers=headers, timeout=60)
         response.raise_for_status()
         return response.text
@@ -85,68 +79,28 @@ def download_report(url, headers):
         logger.error(f"Ошибка загрузки отчета: {str(e)}")
         return None
 
-def print_beautiful_report(data):
-    if not data:
-        print("Нет данных для отображения")
-        return
-
-    try:
-        lines = [line for line in data.split('\n') if line.strip() and not any(
-            line.startswith(x) for x in ('"', 'Total', 'Date\t'))
-        ]
-        
-        if not lines:
-            print("Нет данных объявлений в выбранном периоде")
-            return
-
-        headers = lines[0].split('\t')
-        rows = [line.split('\t') for line in lines[1:]]
-        
-        print("\n" + "=" * 80)
-        print("{:<12} | {:<12} | {:<12} | {:<8} | {:<12}".format(
-            "Date", "Ad ID", "Campaign ID", "Clicks", "Cost (RUB)"
-        ))
-        print("=" * 80)
-        
-        for row in rows:
-            try:
-                date = row[0]
-                ad_id = row[1] if len(row) > 1 else "N/A"
-                campaign_id = row[2] if len(row) > 2 else "N/A"
-                clicks = int(row[3]) if len(row) > 3 else 0
-                cost = float(row[4])/1000000 if len(row) > 4 else 0  # Конвертируем из микрорублей
-                
-                print("{:<12} | {:<12} | {:<12} | {:<8} | {:<12.2f}".format(
-                    date, ad_id, campaign_id, clicks, cost
-                ))
-            except (IndexError, ValueError) as e:
-                logger.warning(f"Ошибка обработки строки: {row} - {str(e)}")
-        
-        print("=" * 80)
-        print(f"Всего объявлений: {len(rows)}")
-        print("=" * 80 + "\n")
-    except UnicodeDecodeError as e:
-        logger.error(f"Ошибка декодирования данных: {str(e)}")
-
 if __name__ == "__main__":
     try:
-        # Укажите ваш токен Яндекс.Директ
-        token = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"
+        # Укажите ваш токен здесь
+        token = "ВАШ_ТОКЕН_ЯНДЕКС_ДИРЕКТ"
         
-        # Установите нужный период
+        # Тестовый период - вчерашний день
         start_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        end_date = start_date  # За один день
+        end_date = start_date
 
-        logger.info(f"Начало выгрузки данных по объявлениям за {start_date}")
+        logger.info(f"Пробуем получить данные за {start_date}")
         
         data = get_direct_report(token, start_date, end_date)
         
         if data:
-            print_beautiful_report(data)
+            logger.info("Успешно получены данные:")
+            print("="*50)
+            print(data)
+            print("="*50)
         else:
-            logger.error("Не удалось получить данные из API")
+            logger.error("Не удалось получить данные")
 
     except Exception as e:
-        logger.critical(f"Критическая ошибка: {str(e)}")
+        logger.critical(f"Критическая ошибка: {str(e)}", exc_info=True)
     finally:
-        logger.info("Завершение работы скрипта")
+        logger.info("Скрипт завершен")
