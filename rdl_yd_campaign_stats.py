@@ -70,7 +70,7 @@ def get_direct_report(token, date_from, date_to):
     except requests.exceptions.RequestException as e:
         logger.error(f"❌ Ошибка API: {e}")
         if hasattr(e, 'response') and e.response:
-            logger.error(f"Тело ошибки: {e.response.text}")
+            logger.error(f"Полный ответ об ошибке: {e.response.text}")  # Добавьте эту строку
         return None
 
 def save_to_postgres(data, db_config):
