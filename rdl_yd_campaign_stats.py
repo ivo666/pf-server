@@ -90,7 +90,7 @@ def get_campaign_stats(token, date, max_retries=3):
         return None
 
 if __name__ == "__main__":
-    TOKEN = "your_token_here"  # Замените на ваш токен
+    TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"  
     report_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
     logger.info(f"Starting report for {report_date}")
