@@ -71,24 +71,34 @@ def generate_week_ranges(start_date, end_date):
 def parse_tsv_data(tsv_data):
     """Парсит TSV данные из API и возвращает список кортежей для вставки"""
     try:
-        # Пропускаем заголовок и пустые строки
+        if not tsv_data or not tsv_data.strip():
+            logger.error("Empty TSV data received")
+            return None
+            
         lines = [line for line in tsv_data.split('\n') if line.strip() and not line.startswith('Date\t')]
         
         data = []
         for line in lines:
-            parts = line.strip().split('\t')
-            if len(parts) >= 7:
-                date = parts[0]
-                campaign_id = int(parts[1])
-                campaign_name = parts[2]
-                ad_id = int(parts[3])
-                clicks = int(parts[4]) if parts[4] else 0
-                impressions = int(parts[5]) if parts[5] else 0
-                # Делим стоимость на 1 000 000 для перевода микроединиц в рубли
-                cost = float(parts[6]) / 1000000 if parts[6] else 0.0
-                
-                data.append((date, campaign_id, campaign_name, ad_id, clicks, impressions, cost))
+            try:
+                parts = line.strip().split('\t')
+                if len(parts) >= 7:
+                    date = parts[0]
+                    campaign_id = int(parts[1])
+                    campaign_name = parts[2]
+                    ad_id = int(parts[3])
+                    clicks = int(parts[4]) if parts[4] else 0
+                    impressions = int(parts[5]) if parts[5] else 0
+                    cost = float(parts[6]) / 1000000 if parts[6] else 0.0
+                    
+                    data.append((date, campaign_id, campaign_name, ad_id, clicks, impressions, cost))
+            except Exception as line_error:
+                logger.error(f"Error parsing line: {line}. Error: {str(line_error)}")
+                continue
         
+        if not data:
+            logger.error("No valid data found in TSV")
+            return None
+            
         return data
     except Exception as e:
         logger.error(f"Failed to parse TSV data: {str(e)}")
@@ -130,7 +140,6 @@ def get_campaign_stats(token, date_from, date_to, max_retries=3):
         "Content-Type": "application/json"
     }
 
-    # Генерируем уникальное имя отчета
     report_hash = hashlib.md5(f"{date_from}_{date_to}".encode()).hexdigest()[:8]
     report_name = f"campaign_stats_{report_hash}"
 
@@ -164,7 +173,7 @@ def get_campaign_stats(token, date_from, date_to, max_retries=3):
             url,
             headers=headers,
             json=body,
-            timeout=60
+            timeout=120
         )
         
         if response.status_code == 200:
@@ -177,17 +186,31 @@ def get_campaign_stats(token, date_from, date_to, max_retries=3):
                 logger.info(f"Waiting {wait_time} seconds before retry...")
                 time.sleep(wait_time)
                 
+                # Добавляем проверку заголовка Retry-After
+                if 'Retry-After' in response.headers:
+                    wait_time = int(response.headers['Retry-After'])
+                    logger.info(f"Server requested to wait {wait_time} seconds")
+                    time.sleep(wait_time)
+                
                 download_url = response.headers.get('Location')
                 if download_url:
                     logger.info(f"Trying to download report (attempt {retry_count + 1})")
-                    download_response = requests.get(download_url, headers=headers, timeout=60)
+                    download_response = requests.get(download_url, headers=headers, timeout=120)
                     if download_response.status_code == 200:
                         return download_response.text
                     else:
                         logger.warning(f"Download failed: {download_response.status_code}")
                 else:
-                    logger.warning("Download URL not found.")
-                    break
+                    logger.warning("Download URL not found, trying to request report again")
+                    response = requests.post(
+                        url,
+                        headers=headers,
+                        json=body,
+                        timeout=120
+                    )
+                    if response.status_code == 200:
+                        return response.text
+                
                 retry_count += 1
             logger.error(f"Max retries ({max_retries}) reached. Report is not ready.")
             return None
@@ -215,6 +238,9 @@ def process_week(conn, token, week_start, week_end, existing_dates):
     # Получаем данные за всю неделю
     date_from_str = week_start.strftime("%Y-%m-%d")
     date_to_str = week_end.strftime("%Y-%m-%d")
+    
+    logger.info(f"Processing dates: {', '.join(d.strftime('%Y-%m-%d') for d in dates_to_process)}")
+    
     data = get_campaign_stats(token, date_from_str, date_to_str)
     
     if data:
@@ -262,10 +288,18 @@ if __name__ == "__main__":
         
         # Обрабатываем каждую неделю
         for week_start, week_end in week_ranges:
+            logger.info(f"\n{'='*50}")
             logger.info(f"Processing week {week_start} - {week_end}")
             if not process_week(conn, TOKEN, week_start, week_end, existing_dates):
                 logger.error(f"Failed to process week {week_start} - {week_end}")
+                # Продолжаем обработку следующих недель даже при ошибке
+                continue
+    except KeyboardInterrupt:
+        logger.info("Script interrupted by user")
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
     finally:
         conn.close()
+        logger.info("Database connection closed")
     
     logger.info("Script finished")
