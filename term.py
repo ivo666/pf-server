@@ -2,6 +2,7 @@ import requests
 import logging
 import time
 import hashlib
+import uuid
 from datetime import datetime, timedelta
 from io import StringIO
 
@@ -70,8 +71,8 @@ def get_campaign_stats(token, date_from, date_to, max_retries=3):
         "Content-Type": "application/json"
     }
 
-    report_hash = hashlib.md5(f"{date_from}_{date_to}".encode()).hexdigest()[:8]
-    report_name = f"campaign_stats_{report_hash}"
+    # Генерируем уникальное имя отчета с использованием UUID
+    report_name = f"campaign_stats_{uuid.uuid4().hex[:8]}"
 
     body = {
         "params": {
