@@ -32,7 +32,7 @@ def parse_tsv_data(tsv_data):
         for line in lines:
             try:
                 parts = line.strip().split('\t')
-                if len(parts) >= 15:  # Увеличили количество полей
+                if len(parts) >= 12:  # Обновленное количество полей
                     record = {
                         'Date': parts[0],
                         'CampaignId': parts[1],
@@ -42,13 +42,10 @@ def parse_tsv_data(tsv_data):
                         'Impressions': parts[5],
                         'Cost': parts[6],
                         'AvgClickPosition': parts[7],
-                        'ClickType': parts[8],
-                        'Device': parts[9],
-                        'IncomeGrade': parts[10],
-                        'LocationOfPresenceId': parts[11],
-                        'MatchType': parts[12],
-                        'Slot': parts[13],
-                        'TargetingCategory': parts[14]
+                        'Device': parts[8],
+                        'LocationOfPresenceId': parts[9],
+                        'MatchType': parts[10],
+                        'Slot': parts[11]
                     }
                     data.append(record)
             except Exception as line_error:
@@ -91,13 +88,10 @@ def get_campaign_stats(token, date_from, date_to, max_retries=3):
                 "Impressions",
                 "Cost",
                 "AvgClickPosition",
-                "ClickType",
                 "Device",
-                "IncomeGrade",
                 "LocationOfPresenceId",
                 "MatchType",
-                "Slot",
-                "TargetingCategory"
+                "Slot"
             ],
             "ReportName": report_name,
             "ReportType": "AD_PERFORMANCE_REPORT",
