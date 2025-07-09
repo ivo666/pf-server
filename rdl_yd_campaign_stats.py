@@ -1,34 +1,32 @@
 import requests
-import json
-import time
 import logging
 from datetime import datetime, timedelta
 
-# Настройка логирования
+# Настройка простого логирования
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-def get_direct_report(token, date_from, date_to):
+def get_campaign_ids(token, date):
     url = "https://api.direct.yandex.com/json/v5/reports"
+    
+    # ASCII-only headers
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "en",
         "Content-Type": "application/json"
     }
 
-    report_body = {
+    # Максимально простой запрос
+    body = {
         "params": {
-            "SelectionCriteria": {
-                "DateFrom": date_from,
-                "DateTo": date_to
-            },
-            "FieldNames": ["AdId", "Clicks"],
-            "ReportName": "Simple_Ad_Report",
-            "ReportType": "AD_PERFORMANCE_REPORT",
+            "SelectionCriteria": {"DateFrom": date, "DateTo": date},
+            "FieldNames": ["CampaignId"],
+            "ReportName": "campaign_ids",
+            "ReportType": "CAMPAIGN_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES",
@@ -37,94 +35,45 @@ def get_direct_report(token, date_from, date_to):
     }
 
     try:
-        logger.debug("Подготовка запроса...")
-        response = requests.post(
-            url,
-            headers=headers,
-            json=report_body,
-            timeout=60
-        )
+        logger.info(f"Requesting campaign IDs for {date}")
+        response = requests.post(url, headers=headers, json=body, timeout=30)
         
-        logger.debug(f"Статус ответа: {response.status_code}")
-        logger.debug(f"Заголовки ответа: {response.headers}")
-
         if response.status_code == 200:
             return response.text
-        elif response.status_code == 201:
-            # Проверяем несколько возможных заголовков для URL отчета
-            download_url = (response.headers.get('Location') or 
-                          response.headers.get('location') or
-                          response.headers.get('download-url'))
-            
-            if download_url:
-                logger.debug(f"Получен URL для загрузки: {download_url}")
-                time.sleep(10)  # Даем время на формирование отчета
-                return download_report(download_url, headers)
-            else:
-                # Пробуем получить URL из тела ответа
-                try:
-                    response_data = response.json()
-                    download_url = response_data.get('result', {}).get('download_url')
-                    if download_url:
-                        logger.debug(f"Получен URL из тела ответа: {download_url}")
-                        time.sleep(10)
-                        return download_report(download_url, headers)
-                except ValueError:
-                    pass
-                
-                logger.error("Не удалось получить URL для загрузки отчета")
-                logger.error("Попробуйте увеличить время ожидания или проверить лимиты API")
-                return None
         else:
-            logger.error(f"Ошибка API: {response.text}")
+            logger.error(f"API error: {response.status_code} - {response.text}")
             return None
             
     except Exception as e:
-        logger.error(f"Ошибка запроса: {str(e)}", exc_info=True)
+        logger.error(f"Request failed: {str(e)}")
         return None
 
-def download_report(url, headers):
-    try:
-        logger.debug(f"Загрузка отчета по URL: {url}")
-        response = requests.get(url, headers=headers, timeout=60)
-        response.raise_for_status()
-        return response.text
-    except Exception as e:
-        logger.error(f"Ошибка загрузки отчета: {str(e)}")
-        return None
+def print_campaign_ids(data):
+    if not data:
+        print("No data received")
+        return
+    
+    print("\nCampaign IDs:")
+    print("=" * 30)
+    for line in data.split('\n'):
+        if line.strip() and not line.startswith(('"', 'CampaignId', 'Total')):
+            print(line.split('\t')[0])
+    print("=" * 30)
 
 if __name__ == "__main__":
-    try:
-        # Укажите ваш токен здесь
-        token = "ВАШ_ТОКЕН_ЯНДЕКС_ДИРЕКТ"
-        
-        # Тестовый период - вчерашний день
-        start_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        end_date = start_date
-
-        logger.info(f"Запрос данных за {start_date}")
-        
-        # Пробуем несколько раз с интервалом
-        max_retries = 3
-        for attempt in range(max_retries):
-            logger.info(f"Попытка {attempt + 1} из {max_retries}")
-            data = get_direct_report(token, start_date, end_date)
-            
-            if data:
-                logger.info("Данные получены:")
-                print("="*50)
-                print(data)
-                print("="*50)
-                break
-            else:
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 10
-                    logger.info(f"Ожидание {wait_time} секунд перед повторной попыткой...")
-                    time.sleep(wait_time)
-        else:
-            logger.error("Данные не получены после всех попыток")
-
-    except Exception as e:
-        logger.critical(f"Фатальная ошибка: {str(e)}", exc_info=True)
-    finally:
-        logger.info("Работа завершена")
+    # Укажите ваш токен (замените на реальный)
+    TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"
+    
+    # Дата для запроса (вчерашний день)
+    report_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    logger.info(f"Starting report for {report_date}")
+    
+    data = get_campaign_ids(TOKEN, report_date)
+    
+    if data:
+        print_campaign_ids(data)
+    else:
+        logger.error("Failed to get campaign IDs")
+    
+    logger.info("Script finished")
