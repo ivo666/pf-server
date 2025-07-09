@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_campaign_and_ad_ids(token, date, max_retries=3):
+def get_campaign_and_ad_ids(token, date, max_retries=5):
     url = "https://api.direct.yandex.com/json/v5/reports"
     
     headers = {
@@ -21,21 +21,21 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
     }
 
     body = {
-    "params": {
-        "SelectionCriteria": {
-            "DateFrom": date,
-            "DateTo": date
-        },
-        "FieldNames": ["CampaignId", "AdId"],
-        "ReportName": "campaign_and_ad_ids_report",
-        "ReportType": "AD_PERFORMANCE_REPORT",
-        "DateRangeType": "CUSTOM_DATE",
-        "Format": "TSV",
-        "IncludeVAT": "YES",
-        "IncludeDiscount": "NO",
-        "Types": ["TEXT_AD"]  # Ключевое добавление!
+        "params": {
+            "SelectionCriteria": {
+                "DateFrom": date,
+                "DateTo": date,
+                "Types": ["TEXT_AD"]  # Правильное расположение
+            },
+            "FieldNames": ["CampaignId", "AdId"],
+            "ReportName": "campaign_and_ad_ids_report",
+            "ReportType": "AD_PERFORMANCE_REPORT",
+            "DateRangeType": "CUSTOM_DATE",
+            "Format": "TSV",
+            "IncludeVAT": "YES",
+            "IncludeDiscount": "NO"
+        }
     }
-}
 
     try:
         logger.info(f"Requesting Campaign and Ad IDs for {date}")
@@ -43,7 +43,7 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
             url,
             headers=headers,
             json=body,
-            timeout=30
+            timeout=60
         )
         
         if response.status_code == 200:
@@ -52,17 +52,20 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
             logger.info("Report is being generated, waiting...")
             retry_count = 0
             while retry_count < max_retries:
-                time.sleep(15)
+                wait_time = 30 * (retry_count + 1)  # Увеличиваем время ожидания с каждой попыткой
+                logger.info(f"Waiting {wait_time} seconds before retry...")
+                time.sleep(wait_time)
+                
                 download_url = response.headers.get('Location')
                 if download_url:
                     logger.info(f"Trying to download report (attempt {retry_count + 1})")
-                    download_response = requests.get(download_url, headers=headers)
+                    download_response = requests.get(download_url, headers=headers, timeout=60)
                     if download_response.status_code == 200:
                         return download_response.text
                     else:
                         logger.warning(f"Download failed: {download_response.status_code}")
                 retry_count += 1
-            logger.error("Max retries reached. Report is not ready.")
+            logger.error(f"Max retries ({max_retries}) reached. Report is not ready.")
             return None
         else:
             logger.error(f"API error: {response.status_code} - {response.text}")
@@ -82,26 +85,19 @@ def print_campaign_and_ad_ids(data):
     print("{:<15} | {:<15}".format("Campaign ID", "Ad ID"))
     print("=" * 60)
     
-    # Парсим TSV-отчет (пропускаем заголовки)
     for line in data.split('\n'):
         if line.strip() and not line.startswith(('"', 'CampaignId', 'Total')):
             parts = line.strip().split('\t')
             if len(parts) >= 2:
-                campaign_id = parts[0]
-                ad_id = parts[1]
-                print("{:<15} | {:<15}".format(campaign_id, ad_id))
+                print("{:<15} | {:<15}".format(parts[0], parts[1]))
     
     print("=" * 60)
 
 if __name__ == "__main__":
-    # Укажите ваш токен
     TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"
-    
-    # Дата для запроса (вчерашний день)
     report_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
     logger.info(f"Starting report for {report_date}")
-    
     data = get_campaign_and_ad_ids(TOKEN, report_date)
     
     if data:
