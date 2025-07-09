@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_campaign_ids(token, date):
+def get_campaign_ids(token, date, max_retries=3):
     url = "https://api.direct.yandex.com/json/v5/reports"
     
     headers = {
@@ -26,7 +26,7 @@ def get_campaign_ids(token, date):
                 "DateFrom": date,
                 "DateTo": date
             },
-            "FieldNames": ["CampaignId"],  # Запрашиваем только CampaignId
+            "FieldNames": ["CampaignId"],
             "ReportName": "campaign_ids_report",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
@@ -49,12 +49,23 @@ def get_campaign_ids(token, date):
             return response.text
         elif response.status_code == 201:
             logger.info("Report is being generated, waiting...")
-            time.sleep(15)
-            download_url = response.headers.get('Location')
-            if download_url:
-                return requests.get(download_url, headers=headers).text
-        logger.error(f"API error: {response.status_code} - {response.text}")
-        return None
+            retry_count = 0
+            while retry_count < max_retries:
+                time.sleep(15)  # Ждем 15 секунд перед повторной попыткой
+                download_url = response.headers.get('Location')
+                if download_url:
+                    logger.info(f"Trying to download report (attempt {retry_count + 1})")
+                    download_response = requests.get(download_url, headers=headers)
+                    if download_response.status_code == 200:
+                        return download_response.text
+                    else:
+                        logger.warning(f"Download failed: {download_response.status_code}")
+                retry_count += 1
+            logger.error("Max retries reached. Report is not ready.")
+            return None
+        else:
+            logger.error(f"API error: {response.status_code} - {response.text}")
+            return None
         
     except Exception as e:
         logger.error(f"Request failed: {str(e)}")
@@ -65,17 +76,22 @@ def print_campaign_ids(data):
         print("No data received")
         return
     
-    print("\nCampaign IDs Report:")
+    campaign_ids = set()
+    
+    for line in data.split('\n'):
+        if line.strip() and not line.startswith(('"', 'CampaignId', 'Total')):
+            campaign_ids.add(line.strip())
+    
+    print("\nUnique Campaign IDs:")
     print("=" * 40)
     print("{:<15}".format("Campaign ID"))
     print("=" * 40)
     
-    # Пропускаем заголовки и пустые строки
-    for line in data.split('\n'):
-        if line.strip() and not line.startswith(('"', 'CampaignId', 'Total')):
-            campaign_id = line.strip()  # В TSV-отчете будет одна колонка
-            print("{:<15}".format(campaign_id))
+    for campaign_id in sorted(campaign_ids):
+        print("{:<15}".format(campaign_id))
+    
     print("=" * 40)
+    print(f"Total unique campaigns: {len(campaign_ids)}")
 
 if __name__ == "__main__":
     # Укажите ваш токен
