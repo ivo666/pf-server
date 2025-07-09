@@ -32,7 +32,7 @@ def parse_tsv_data(tsv_data):
         for line in lines:
             try:
                 parts = line.strip().split('\t')
-                if len(parts) >= 11:  # Увеличили количество полей
+                if len(parts) >= 15:  # Увеличили количество полей
                     record = {
                         'Date': parts[0],
                         'CampaignId': parts[1],
@@ -41,10 +41,14 @@ def parse_tsv_data(tsv_data):
                         'Clicks': parts[4],
                         'Impressions': parts[5],
                         'Cost': parts[6],
-                        'Placement': parts[7],
-                        'CriteriaType': parts[8],
-                        'ClientLogin': parts[9],
-                        'AvgClickPosition': parts[10]
+                        'AvgClickPosition': parts[7],
+                        'ClickType': parts[8],
+                        'Device': parts[9],
+                        'IncomeGrade': parts[10],
+                        'LocationOfPresenceId': parts[11],
+                        'MatchType': parts[12],
+                        'Slot': parts[13],
+                        'TargetingCategory': parts[14]
                     }
                     data.append(record)
             except Exception as line_error:
@@ -86,10 +90,14 @@ def get_campaign_stats(token, date_from, date_to, max_retries=3):
                 "Clicks",
                 "Impressions",
                 "Cost",
-                "Placement",
-                "CriteriaType",
-                "ClientLogin",
-                "AvgClickPosition"
+                "AvgClickPosition",
+                "ClickType",
+                "Device",
+                "IncomeGrade",
+                "LocationOfPresenceId",
+                "MatchType",
+                "Slot",
+                "TargetingCategory"
             ],
             "ReportName": report_name,
             "ReportType": "AD_PERFORMANCE_REPORT",
@@ -168,15 +176,26 @@ def print_data_as_table(data):
             if len(str(value)) > col_widths[header]:
                 col_widths[header] = len(str(value))
     
+    # Ограничиваем ширину колонок для удобства просмотра
+    max_col_width = 20
+    for header in col_widths:
+        if col_widths[header] > max_col_width:
+            col_widths[header] = max_col_width
+    
     # Печатаем заголовки
-    header_line = " | ".join([f"{header:<{col_widths[header]}}" for header in headers])
+    header_line = " | ".join([f"{header[:col_widths[header]]:<{col_widths[header]}}" for header in headers])
     print(header_line)
     print("-" * len(header_line))
     
     # Печатаем данные
     for row in data:
-        row_line = " | ".join([f"{str(row[header]):<{col_widths[header]}}" for header in headers])
-        print(row_line)
+        row_line = []
+        for header in headers:
+            value = str(row[header])
+            if len(value) > col_widths[header]:
+                value = value[:col_widths[header]-3] + "..."
+            row_line.append(f"{value:<{col_widths[header]}}")
+        print(" | ".join(row_line))
 
 if __name__ == "__main__":
     # Устанавливаем даты (с 01.07.2025 по 08.07.2025)
