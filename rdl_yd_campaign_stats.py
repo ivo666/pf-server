@@ -1,6 +1,7 @@
 import requests
 import logging
 import time
+import hashlib
 from datetime import datetime, timedelta
 
 # Настройка логирования
@@ -20,14 +21,18 @@ def get_campaign_and_ad_ids(token, date, max_retries=3):
         "Content-Type": "application/json"
     }
 
+    # Генерируем уникальное имя отчета
+    report_hash = hashlib.md5(date.encode()).hexdigest()[:8]
+    report_name = f"campaign_ad_ids_{report_hash}"
+
     body = {
         "params": {
             "SelectionCriteria": {
                 "DateFrom": date,
                 "DateTo": date
             },
-            "FieldNames": ["Date", "CampaignId", "AdId"],  # Добавлено Date
-            "ReportName": "campaign_and_ad_ids_report",
+            "FieldNames": ["Date", "CampaignId", "AdId"],
+            "ReportName": report_name,  # Уникальное имя
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
