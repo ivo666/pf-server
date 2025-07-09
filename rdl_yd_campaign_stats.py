@@ -1,5 +1,6 @@
 import requests
 import logging
+import time
 from datetime import datetime, timedelta
 
 # Настройка логирования
@@ -10,12 +11,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_ad_ids(token, date):
+def get_campaign_ids(token, date):
     url = "https://api.direct.yandex.com/json/v5/reports"
     
     headers = {
         "Authorization": f"Bearer {token}",
-        "Accept-Language": "en",  # Английский язык для избежания проблем с кодировкой
+        "Accept-Language": "en",
         "Content-Type": "application/json"
     }
 
@@ -25,8 +26,8 @@ def get_ad_ids(token, date):
                 "DateFrom": date,
                 "DateTo": date
             },
-            "FieldNames": ["CampaignId"],
-            "ReportName": "ad_ids_report",
+            "FieldNames": ["CampaignId"],  # Запрашиваем только CampaignId
+            "ReportName": "campaign_ids_report",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -36,7 +37,7 @@ def get_ad_ids(token, date):
     }
 
     try:
-        logger.info(f"Requesting Ad IDs for {date}")
+        logger.info(f"Requesting Campaign IDs for {date}")
         response = requests.post(
             url,
             headers=headers,
@@ -48,7 +49,7 @@ def get_ad_ids(token, date):
             return response.text
         elif response.status_code == 201:
             logger.info("Report is being generated, waiting...")
-            time.sleep(15)  # Ожидаем формирования отчета
+            time.sleep(15)
             download_url = response.headers.get('Location')
             if download_url:
                 return requests.get(download_url, headers=headers).text
@@ -59,26 +60,22 @@ def get_ad_ids(token, date):
         logger.error(f"Request failed: {str(e)}")
         return None
 
-def print_ad_ids(data):
+def print_campaign_ids(data):
     if not data:
         print("No data received")
         return
     
-    print("\nAd IDs Report:")
-    print("=" * 80)
-    print("{:<12} | {:<12} | {:<40}".format("Ad ID", "Campaign ID", "Ad Name"))
-    print("=" * 80)
+    print("\nCampaign IDs Report:")
+    print("=" * 40)
+    print("{:<15}".format("Campaign ID"))
+    print("=" * 40)
     
+    # Пропускаем заголовки и пустые строки
     for line in data.split('\n'):
-        if line.strip() and not line.startswith(('"', 'AdId', 'Total')):
-            parts = line.split('\t')
-            if len(parts) >= 3:
-                print("{:<12} | {:<12} | {:<40}".format(
-                    parts[0], 
-                    parts[1], 
-                    parts[2][:40]  # Обрезаем длинные названия
-                ))
-    print("=" * 80)
+        if line.strip() and not line.startswith(('"', 'CampaignId', 'Total')):
+            campaign_id = line.strip()  # В TSV-отчете будет одна колонка
+            print("{:<15}".format(campaign_id))
+    print("=" * 40)
 
 if __name__ == "__main__":
     # Укажите ваш токен
@@ -87,13 +84,13 @@ if __name__ == "__main__":
     # Дата для запроса (вчерашний день)
     report_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
-    logger.info(f"Starting Ad IDs report for {report_date}")
+    logger.info(f"Starting Campaign IDs report for {report_date}")
     
-    data = get_ad_ids(TOKEN, report_date)
+    data = get_campaign_ids(TOKEN, report_date)
     
     if data:
-        print_ad_ids(data)
+        print_campaign_ids(data)
     else:
-        logger.error("Failed to get Ad IDs")
+        logger.error("Failed to get Campaign IDs")
     
     logger.info("Script finished")
