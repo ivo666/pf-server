@@ -7,6 +7,11 @@ import psycopg2
 from datetime import datetime, timedelta
 from io import StringIO
 
+# Константы
+REQUEST_DELAY = 15  # Пауза между запросами в секундах
+MAX_RETRIES = 3
+RETRY_DELAY = 30  # Начальная задержка между повторными попытками в секундах
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -287,9 +292,15 @@ if __name__ == "__main__":
         week_ranges = generate_week_ranges(start_date, end_date)
         
         # Обрабатываем каждую неделю
-        for week_start, week_end in week_ranges:
+        for i, (week_start, week_end) in enumerate(week_ranges):
             logger.info(f"\n{'='*50}")
             logger.info(f"Processing week {week_start} - {week_end}")
+            
+            # Добавляем паузу перед каждым запросом, кроме первого
+            if i > 0:
+                logger.info(f"Waiting {REQUEST_DELAY} seconds before next request...")
+                time.sleep(REQUEST_DELAY)
+            
             if not process_week(conn, TOKEN, week_start, week_end, existing_dates):
                 logger.error(f"Failed to process week {week_start} - {week_end}")
                 # Продолжаем обработку следующих недель даже при ошибке
