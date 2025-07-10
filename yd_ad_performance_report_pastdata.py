@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 REQUEST_DELAY = 15
 MAX_RETRIES = 3
 RETRY_DELAY = 30
-WEEKLY_REPORT = True
+DAILY_REPORT = True  # Изменили на дневные отчеты
 
 def log_console(message):
     console_logger.info(message)
@@ -64,22 +64,18 @@ def create_table_if_not_exists(conn):
     create_table_sql = """
     CREATE TABLE IF NOT EXISTS rdl.yd_ad_performance_report (
         date DATE NOT NULL,
-        ad_id VARCHAR(20) NOT NULL,
-        ad_format TEXT,
-        impressions INTEGER DEFAULT 0,
-        clicks INTEGER DEFAULT 0,
-        ctr DECIMAL(5,2),
-        cost DECIMAL(18,2) DEFAULT 0.0,
-        avg_cpc DECIMAL(18,2),
-        avg_pageviews DECIMAL(5,2),
-        avg_traffic_volume DECIMAL(5,2),
-        conversions INTEGER DEFAULT 0,
-        conversion_rate DECIMAL(5,2),
-        cost_per_conversion DECIMAL(18,2),
-        roi DECIMAL(5,2),
-        revenue DECIMAL(18,2) DEFAULT 0.0,
-        profit DECIMAL(18,2) DEFAULT 0.0,
-        PRIMARY KEY (date, ad_id)
+        campaign_id BIGINT NOT NULL,
+        campaign_name TEXT,
+        ad_id BIGINT NOT NULL,
+        clicks INTEGER,
+        impressions INTEGER,
+        cost DECIMAL(18, 2),
+        avg_click_position DECIMAL(10, 2),
+        device TEXT,
+        location_of_presence_id INTEGER,
+        match_type TEXT,
+        slot TEXT,
+        CONSTRAINT pk_yd_ad_performance PRIMARY KEY (date, campaign_id, ad_id)
     )
     """
     
@@ -95,47 +91,46 @@ def create_table_if_not_exists(conn):
         conn.rollback()
         raise
 
-def check_existing_data(conn, date_range):
+def check_existing_data(conn, date):
+    """Проверяет наличие данных за указанную дату"""
     check_sql = """
     SELECT COUNT(*) FROM rdl.yd_ad_performance_report 
-    WHERE date BETWEEN %s AND %s
+    WHERE date = %s
     """
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute(check_sql, date_range)
+            cursor.execute(check_sql, (date,))
             return cursor.fetchone()[0] > 0
     except Exception as e:
         logger.error(f"Error checking existing data: {str(e)}")
         raise
 
-def save_to_database(data, db_config, date_range):
+def save_to_database(data, db_config, date):
     conn = None
     try:
         conn = psycopg2.connect(**db_config)
         create_table_if_not_exists(conn)
         
-        if check_existing_data(conn, date_range):
-            log_console(f"Данные за период {date_range[0]} - {date_range[1]} уже существуют")
+        if check_existing_data(conn, date):
+            log_console(f"Данные за {date} уже существуют")
             return False
         
         insert_sql = """
         INSERT INTO rdl.yd_ad_performance_report (
-            date, ad_id, ad_format, impressions, clicks, ctr, cost,
-            avg_cpc, avg_pageviews, avg_traffic_volume, conversions,
-            conversion_rate, cost_per_conversion, roi, revenue, profit
+            date, campaign_id, campaign_name, ad_id, clicks, impressions, cost, 
+            avg_click_position, device, location_of_presence_id, match_type, slot
         ) VALUES (
-            %(Date)s, %(AdId)s, %(AdFormat)s, %(Impressions)s, %(Clicks)s,
-            %(Ctr)s, %(Cost)s, %(AvgCpc)s, %(AvgPageviews)s,
-            %(AvgTrafficVolume)s, %(Conversions)s, %(ConversionRate)s,
-            %(CostPerConversion)s, %(Roi)s, %(Revenue)s, %(Profit)s
+            %(Date)s, %(CampaignId)s, %(CampaignName)s, %(AdId)s, %(Clicks)s, 
+            %(Impressions)s, %(Cost)s, %(AvgClickPosition)s, %(Device)s, 
+            %(LocationOfPresenceId)s, %(MatchType)s, %(Slot)s
         ) ON CONFLICT DO NOTHING
         """
         
         with conn.cursor() as cursor:
             execute_batch(cursor, insert_sql, data)
             conn.commit()
-            log_console(f"Сохранено {len(data)} записей за {date_range[0]} - {date_range[1]}")
+            log_console(f"Сохранено {len(data)} записей за {date}")
             return True
             
     except Exception as e:
@@ -147,37 +142,37 @@ def save_to_database(data, db_config, date_range):
             conn.close()
 
 def parse_tsv_data(tsv_data):
+    """Парсит TSV данные с нужными полями"""
     if not tsv_data or not tsv_data.strip():
         logger.error("Получены пустые данные")
         return None
         
     lines = [line for line in tsv_data.split('\n') 
-             if line.strip() and not line.startswith('Дата\t')]
+             if line.strip() and not line.startswith('Date\t')]
     
     data = []
     for line in lines:
         try:
             parts = line.strip().split('\t')
-            if len(parts) >= 16:
-                record = {
+            if len(parts) >= 12:
+                # Обработка специальных значений
+                avg_pos = None if parts[7] in ('--', '') else float(parts[7].replace(',', '.'))
+                cost = None if parts[6] in ('--', '') else float(parts[6].replace(',', '.')) / 1000000
+                
+                data.append({
                     'Date': parts[0],
-                    'AdId': f"M-{parts[1]}" if parts[1] else None,
-                    'AdFormat': parts[2],
-                    'Impressions': int(parts[3]) if parts[3] else 0,
+                    'CampaignId': int(parts[1]) if parts[1] else None,
+                    'CampaignName': parts[2],
+                    'AdId': int(parts[3]) if parts[3] else None,
                     'Clicks': int(parts[4]) if parts[4] else 0,
-                    'Ctr': float(parts[5].replace(',', '.')) if parts[5] not in ('--', '') else None,
-                    'Cost': float(parts[6].replace(',', '.')) if parts[6] not in ('--', '') else 0.0,
-                    'AvgCpc': float(parts[7].replace(',', '.')) if parts[7] not in ('--', '') else None,
-                    'AvgPageviews': float(parts[8].replace(',', '.')) if parts[8] not in ('--', '') else None,
-                    'AvgTrafficVolume': float(parts[9].replace(',', '.')) if parts[9] not in ('--', '') else None,
-                    'Conversions': int(parts[10]) if parts[10] else 0,
-                    'ConversionRate': float(parts[11].replace(',', '.')) if parts[11] not in ('--', '') else None,
-                    'CostPerConversion': float(parts[12].replace(',', '.')) if parts[12] not in ('--', '') else None,
-                    'Roi': float(parts[13].replace(',', '.')) if parts[13] not in ('--', '') else None,
-                    'Revenue': float(parts[14].replace(',', '.')) if parts[14] not in ('--', '') else 0.0,
-                    'Profit': float(parts[15].replace(',', '.')) if parts[15] not in ('--', '') else 0.0
-                }
-                data.append(record)
+                    'Impressions': int(parts[5]) if parts[5] else 0,
+                    'Cost': cost,
+                    'AvgClickPosition': avg_pos,
+                    'Device': parts[8],
+                    'LocationOfPresenceId': int(parts[9]) if parts[9] else None,
+                    'MatchType': parts[10],
+                    'Slot': parts[11]
+                })
         except Exception as e:
             logger.warning(f"Ошибка обработки строки: {line[:100]}... Ошибка: {str(e)}")
             continue
@@ -186,7 +181,8 @@ def parse_tsv_data(tsv_data):
         logger.debug(f"Первые 3 строки данных: {data[:3]}")
     return data if data else None
 
-def get_campaign_stats(token, date_from, date_to):
+def get_campaign_stats(token, date):
+    """Запрашивает данные за один день"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
@@ -195,24 +191,20 @@ def get_campaign_stats(token, date_from, date_to):
 
     body = {
         "params": {
-            "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
+            "SelectionCriteria": {"DateFrom": date, "DateTo": date},
             "FieldNames": [
                 "Date",
+                "CampaignId",
+                "CampaignName",
                 "AdId",
-                "AdFormat",
-                "Impressions",
                 "Clicks",
-                "Ctr",
+                "Impressions",
                 "Cost",
-                "AvgCpc",
-                "AvgPageviews",
-                "AvgTrafficVolume",
-                "Conversions",
-                "ConversionRate",
-                "CostPerConversion",
-                "Roi",
-                "Revenue",
-                "Profit"
+                "AvgClickPosition",
+                "Device",
+                "LocationOfPresenceId",
+                "MatchType",
+                "Slot"
             ],
             "ReportName": f"report_{uuid.uuid4().hex[:8]}",
             "ReportType": "AD_PERFORMANCE_REPORT",
@@ -225,7 +217,7 @@ def get_campaign_stats(token, date_from, date_to):
 
     for attempt in range(MAX_RETRIES):
         try:
-            log_console(f"Запрос данных за {date_from} - {date_to} (попытка {attempt + 1})")
+            log_console(f"Запрос данных за {date} (попытка {attempt + 1})")
             response = requests.post(
                 "https://api.direct.yandex.com/json/v5/reports",
                 headers=headers,
@@ -240,10 +232,25 @@ def get_campaign_stats(token, date_from, date_to):
                 log_console(f"Отчет формируется, ожидание {wait_time} секунд...")
                 time.sleep(wait_time)
                 continue
-            
-            logger.error(f"API error: {response.status_code} - {response.text}")
-            log_console("Ошибка API Яндекс.Директ")
-            return None
+            elif response.status_code == 400:
+                error_data = response.json()
+                error_msg = error_data.get('error', {}).get('error_string', 'Неизвестная ошибка')
+                error_detail = error_data.get('error', {}).get('error_detail', 'Нет деталей')
+                logger.error(f"API error 400: {error_msg} - {error_detail}")
+                log_console(f"Ошибка в запросе: {error_msg}")
+                return None
+            elif response.status_code == 500:
+                logger.error(f"API error 500: {response.text}")
+                log_console("Внутренняя ошибка сервера Яндекс.Директ")
+                return None
+            elif response.status_code == 403:
+                logger.error(f"API error 403: {response.text}")
+                log_console("Ошибка авторизации. Проверьте токен доступа")
+                return None
+            else:
+                logger.error(f"API error: {response.status_code} - {response.text}")
+                log_console(f"Ошибка API Яндекс.Директ (код {response.status_code})")
+                return None
             
         except Exception as e:
             logger.error(f"Request failed (attempt {attempt + 1}): {str(e)}")
@@ -252,43 +259,75 @@ def get_campaign_stats(token, date_from, date_to):
     log_console("Превышено максимальное количество попыток")
     return None
 
-def get_date_ranges(start_date, end_date):
+def get_dates(start_date, end_date):
+    """Генерирует список дней для запроса"""
     start = datetime.strptime(start_date, "%Y-%m-%d").date()
     end = datetime.strptime(end_date, "%Y-%m-%d").date()
-    
-    if not WEEKLY_REPORT:
-        return [(start_date, end_date)]
     
     dates = []
     current = start
     while current <= end:
-        week_end = min(current + timedelta(days=6), end)
-        dates.append((current.strftime("%Y-%m-%d"), week_end.strftime("%Y-%m-%d")))
-        current = week_end + timedelta(days=1)
+        dates.append(current.strftime("%Y-%m-%d"))
+        current += timedelta(days=1)
     return dates
+
+def check_token(token):
+    """Проверяет валидность токена"""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept-Language": "ru"
+    }
+    
+    try:
+        response = requests.get(
+            "https://api.direct.yandex.com/json/v5/agencyclients",
+            headers=headers,
+            timeout=10
+        )
+        if response.status_code == 200:
+            return True
+        logger.error(f"Token check failed: {response.status_code} - {response.text}")
+        return False
+    except Exception as e:
+        logger.error(f"Token check error: {str(e)}")
+        return False
 
 if __name__ == "__main__":
     try:
         config = load_config()
         log_console("Конфигурация загружена")
         
+        if not check_token(config['yandex']['token']):
+            log_console("Ошибка проверки токена. Проверьте его корректность и права доступа")
+            exit(1)
+            
         end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        date_ranges = get_date_ranges("2025-05-01", end_date)
+        start_date = "2025-07-01"
         
-        for range_start, range_end in date_ranges:
-            log_console(f"Обработка периода {range_start} - {range_end}")
+        dates = get_dates(start_date, end_date)
+        
+        for date in dates:
+            log_console(f"Обработка даты {date}")
             time.sleep(REQUEST_DELAY)
             
-            data = get_campaign_stats(config['yandex']['token'], range_start, range_end)
+            data = get_campaign_stats(config['yandex']['token'], date)
             if not data:
+                log_console(f"Пропускаем дату {date} из-за ошибки")
                 continue
                 
             parsed = parse_tsv_data(data)
             if parsed:
-                save_to_database(parsed, config['db'], (range_start, range_end))
+                if not save_to_database(parsed, config['db'], date):
+                    log_console(f"Данные за {date} не были сохранены (возможно уже существуют)")
+            else:
+                log_console(f"Нет данных для сохранения за {date}")
         
         log_console("Скрипт успешно завершен")
         
+    except KeyboardInterrupt:
+        log_console("Скрипт остановлен пользователем")
+        exit(0)
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
-        log_console("Критическая ошибка выполнения скрипта")
+        log_console(f"Критическая ошибка: {str(e)}")
+        exit(1)
