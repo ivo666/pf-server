@@ -12,11 +12,14 @@ from psycopg2.extras import execute_batch
 log_file = '/var/log/yandex_direct_loader.log'
 os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-# Настраиваем логирование ТОЛЬКО в файл
+# Настраиваем логирование и в файл, и в терминал (только для информации о ходе выполнения)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler(log_file)]
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
