@@ -161,6 +161,7 @@ def main():
                                     clicks, cost, avg_click_position, device,
                                     location_of_presence_id, match_type, slot
                                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (date, campaign_id, ad_id) DO NOTHING
                             """, (
                                 parts[0],  # Date
                                 int(parts[1]),  # CampaignId
