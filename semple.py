@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timedelta
 
 YANDEX_TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"  # Замените на реальный токен
-DATE = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")  # Данные за вчера
+DATE = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")  # Данные за вчера
 MAX_RETRIES = 3
 RETRY_DELAY = 30
 
