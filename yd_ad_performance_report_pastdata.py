@@ -54,31 +54,25 @@ def load_config():
     }
 
 def create_table_if_not_exists(conn):
-    create_table_sql = """
-    CREATE TABLE IF NOT EXISTS rdl.yd_ad_performance_report (
-        date DATE NOT NULL,
-        campaign_id BIGINT NOT NULL,
-        campaign_name TEXT,
-        ad_id BIGINT NOT NULL,
-        impressions INTEGER,
-        clicks INTEGER,
-        cost DECIMAL(18, 2),
-        avg_click_position DECIMAL(10, 2),
-        device TEXT,
-        location_of_presence_id INTEGER,
-        match_type TEXT,
-        slot TEXT,
-        PRIMARY KEY (date, campaign_id, ad_id)
-    )
-    """
     with conn.cursor() as cursor:
         cursor.execute("CREATE SCHEMA IF NOT EXISTS rdl;")
-        cursor.execute(create_table_sql)
-        conn.commit()
-
-def save_raw_data_to_db(conn, date, raw_data):
-    """Сохраняем сырые данные в отдельную таблицу для проверки"""
-    with conn.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rdl.yd_ad_performance_report (
+                date DATE NOT NULL,
+                campaign_id BIGINT NOT NULL,
+                campaign_name TEXT,
+                ad_id BIGINT NOT NULL,
+                impressions INTEGER,
+                clicks INTEGER,
+                cost DECIMAL(18, 2),
+                avg_click_position DECIMAL(10, 2),
+                device TEXT,
+                location_of_presence_id INTEGER,
+                match_type TEXT,
+                slot TEXT,
+                PRIMARY KEY (date, campaign_id, ad_id)
+            )
+        """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS rdl.yd_raw_data (
                 id SERIAL PRIMARY KEY,
@@ -87,6 +81,10 @@ def save_raw_data_to_db(conn, date, raw_data):
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        conn.commit()
+
+def save_raw_data_to_db(conn, date, raw_data):
+    with conn.cursor() as cursor:
         cursor.execute(
             "INSERT INTO rdl.yd_raw_data (date, raw_data) VALUES (%s, %s)",
             (date, raw_data)
@@ -104,18 +102,9 @@ def get_campaign_stats(token, date):
         "params": {
             "SelectionCriteria": {"DateFrom": date, "DateTo": date},
             "FieldNames": [
-                "Date",
-                "CampaignId",
-                "CampaignName",
-                "AdId",
-                "Impressions",
-                "Clicks",
-                "Cost",
-                "AvgClickPosition",
-                "Device",
-                "LocationOfPresenceId",
-                "MatchType",
-                "Slot"
+                "Date", "CampaignId", "CampaignName", "AdId",
+                "Impressions", "Clicks", "Cost", "AvgClickPosition",
+                "Device", "LocationOfPresenceId", "MatchType", "Slot"
             ],
             "ReportName": str(uuid.uuid4()),
             "ReportType": "AD_PERFORMANCE_REPORT",
@@ -150,40 +139,55 @@ def get_campaign_stats(token, date):
     return None
 
 def process_data(conn, raw_data, date):
-    """Минимальная обработка данных перед сохранением"""
+    """Корректная обработка TSV данных"""
+    if not raw_data:
+        return []
+    
     lines = [line for line in raw_data.split('\n') if line.strip()]
-    header = None
-    data = []
+    if not lines:
+        return []
+    
+    header = []
+    data_lines = []
     
     for line in lines:
         if line.startswith('Дата\t'):
             header = line.strip().split('\t')
-            continue
-        if not header:
-            continue
-            
+        else:
+            data_lines.append(line)
+    
+    if not header:
+        logger.error("Не найден заголовок в TSV данных")
+        return []
+    
+    expected_columns = 12  # Количество ожидаемых столбцов
+    
+    data = []
+    for line in data_lines:
         parts = line.strip().split('\t')
-        if len(parts) != len(header):
+        if len(parts) != expected_columns:
+            logger.warning(f"Пропущена строка (несоответствие столбцов): {line[:200]}...")
             continue
-            
+        
         try:
             record = {
                 'Date': parts[0],
-                'CampaignId': int(parts[1]),
-                'CampaignName': parts[2],
-                'AdId': int(parts[3]),
+                'CampaignId': int(parts[1]) if parts[1] else 0,
+                'CampaignName': parts[2] if parts[2] else '',
+                'AdId': int(parts[3]) if parts[3] else 0,
                 'Impressions': int(parts[4]) if parts[4] else 0,
                 'Clicks': int(parts[5]) if parts[5] else 0,
-                'Cost': float(parts[6].replace(',', '.')) / 1000000 if parts[6] and parts[6] != '--' else 0,
+                'Cost': float(parts[6].replace(',', '.')) / 1000000 if parts[6] and parts[6] != '--' else 0.0,
                 'AvgClickPosition': float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,
-                'Device': parts[8],
+                'Device': parts[8] if parts[8] else '',
                 'LocationOfPresenceId': int(parts[9]) if parts[9] else None,
-                'MatchType': parts[10],
-                'Slot': parts[11]
+                'MatchType': parts[10] if parts[10] else '',
+                'Slot': parts[11] if parts[11] else ''
             }
             data.append(record)
         except Exception as e:
-            logger.error(f"Error processing line: {line[:100]}... Error: {str(e)}")
+            logger.error(f"Ошибка обработки строки: {line[:200]}... Ошибка: {str(e)}")
+            continue
     
     return data
 
@@ -196,7 +200,7 @@ def main():
         create_table_if_not_exists(conn)
 
         end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start_date = "2025-07-01"  # Пример начальной даты
+        start_date = "2025-07-01"
 
         current_date = datetime.strptime(start_date, "%Y-%m-%d").date()
         end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
@@ -211,10 +215,8 @@ def main():
                 current_date += timedelta(days=1)
                 continue
 
-            # Сохраняем сырые данные для проверки
             save_raw_data_to_db(conn, current_date, raw_data)
 
-            # Обработка и сохранение данных
             data = process_data(conn, raw_data, date_str)
             if data:
                 with conn.cursor() as cursor:
@@ -227,7 +229,15 @@ def main():
                             %(Date)s, %(CampaignId)s, %(CampaignName)s, %(AdId)s,
                             %(Impressions)s, %(Clicks)s, %(Cost)s, %(AvgClickPosition)s,
                             %(Device)s, %(LocationOfPresenceId)s, %(MatchType)s, %(Slot)s
-                        ) ON CONFLICT DO NOTHING
+                        ) ON CONFLICT (date, campaign_id, ad_id) DO UPDATE SET
+                            impressions = EXCLUDED.impressions,
+                            clicks = EXCLUDED.clicks,
+                            cost = EXCLUDED.cost,
+                            avg_click_position = EXCLUDED.avg_click_position,
+                            device = EXCLUDED.device,
+                            location_of_presence_id = EXCLUDED.location_of_presence_id,
+                            match_type = EXCLUDED.match_type,
+                            slot = EXCLUDED.slot
                     """, data)
                     conn.commit()
                     log_console(f"Сохранено {len(data)} записей за {date_str}")
