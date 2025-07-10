@@ -2,7 +2,7 @@ import requests
 import psycopg2
 import time
 import configparser
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Настройка логгирования
 print("🟢 Запуск скрипта")
@@ -25,15 +25,20 @@ except Exception as e:
     print(f"💥 Ошибка загрузки конфигурации: {e}")
     exit(1)
 
-# Фиксированная дата по вашему запросу
-DATE = "2025-07-01"
-MAX_RETRIES = 3  # Максимальное количество попыток
-RETRY_DELAY = 30  # Задержка между попытками в секундах
+# Параметры запроса
+MAX_RETRIES = 3
+RETRY_DELAY = 30
+DATE = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")  # Вчерашняя дата
 
 def get_campaign_stats(token, date, attempt=1):
-    """Получение данных из API Яндекс.Директ с ограничением попыток"""
+    """Получение данных из API Яндекс.Директ"""
     print(f"📊 Попытка {attempt}: запрос данных за {date}")
     
+    # Проверка что дата не будущая
+    if datetime.strptime(date, "%Y-%m-%d") > datetime.now():
+        print(f"❌ Ошибка: дата {date} является будущей")
+        return None
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
@@ -48,7 +53,7 @@ def get_campaign_stats(token, date, attempt=1):
                 "Impressions", "Clicks", "Cost", "AvgClickPosition",
                 "Device", "LocationOfPresenceId", "MatchType", "Slot"
             ],
-            "ReportName": f"report_{int(time.time())}",  # Уникальное имя
+            "ReportName": f"report_{int(time.time())}",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -89,7 +94,6 @@ def save_to_db(conn, raw_data):
         print("❌ Нет данных для сохранения")
         return
 
-    # Фильтрация данных
     lines = [line for line in raw_data.strip().split('\n') 
              if line.strip() and line.split('\t')[0].startswith('20')]
     
@@ -104,25 +108,9 @@ def save_to_db(conn, raw_data):
         for i, line in enumerate(lines, 1):
             parts = line.split('\t')
             if len(parts) < 12:
-                print(f"⚠️ Пропущена строка (недостаточно данных): {line[:50]}...")
                 continue
 
             try:
-                # Подготовка данных
-                date_value = parts[0]
-                campaign_id = int(parts[1]) if parts[1] else 0
-                campaign_name = parts[2] if parts[2] else ''
-                ad_id = int(parts[3]) if parts[3] else 0
-                impressions = int(parts[4]) if parts[4] else 0
-                clicks = int(parts[5]) if parts[5] else 0
-                cost = float(parts[6].replace(',', '.'))/1000000 if parts[6] and parts[6] != '--' else 0.0
-                avg_pos = float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None
-                device = parts[8] if parts[8] else None
-                location_id = int(parts[9]) if parts[9] else 0
-                match_type = parts[10] if parts[10] else None
-                slot = parts[11] if parts[11] else None
-
-                # Вставка данных
                 cursor.execute("""
                 INSERT INTO rdl.yd_ad_performance_report (
                     date, campaign_id, campaign_name, ad_id, location_of_presence_id,
@@ -134,24 +122,24 @@ def save_to_db(conn, raw_data):
                     impressions = EXCLUDED.impressions,
                     clicks = EXCLUDED.clicks,
                     cost = EXCLUDED.cost,
-                    avg_click_position = EXCLUDED.avg_click_position,
-                    device = EXCLUDED.device,
-                    match_type = EXCLUDED.match_type,
-                    slot = EXCLUDED.slot
+                    avg_click_position = EXCLUDED.avg_click_position
                 """, (
-                    date_value, campaign_id, campaign_name, ad_id, location_id,
-                    impressions, clicks, cost, avg_pos,
-                    device, match_type, slot
+                    parts[0],  # date
+                    int(parts[1]) if parts[1] else 0,
+                    parts[2] if parts[2] else '',
+                    int(parts[3]) if parts[3] else 0,
+                    int(parts[9]) if parts[9] else 0,
+                    int(parts[4]) if parts[4] else 0,
+                    int(parts[5]) if parts[5] else 0,
+                    float(parts[6].replace(',', '.'))/1000000 if parts[6] and parts[6] != '--' else 0,
+                    float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,
+                    parts[8],
+                    parts[10],
+                    parts[11]
                 ))
                 success += 1
-                
-                # Вывод прогресса каждые 50 строк
-                if i % 50 == 0:
-                    print(f"⏳ Обработано {i} строк...")
-                    
             except Exception as e:
                 print(f"⚠️ Ошибка в строке {i}: {e}")
-                continue
 
         conn.commit()
         print(f"✅ Успешно сохранено {success} из {len(lines)} строк")
