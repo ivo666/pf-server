@@ -25,7 +25,7 @@ except Exception as e:
     print(f"💥 Ошибка загрузки конфигурации: {e}")
     exit(1)
 
-DATE = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+DATE = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
 
 def get_campaign_stats(token, date):
     """Получение данных из API Яндекс.Директ"""
