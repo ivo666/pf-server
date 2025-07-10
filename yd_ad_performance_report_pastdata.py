@@ -5,6 +5,7 @@ import uuid
 import configparser
 import psycopg2
 import os
+from datetime import datetime, timedelta  # Импортируем datetime и timedelta
 
 # Настройка логирования
 log_file = '/var/log/yandex_direct_loader.log'
