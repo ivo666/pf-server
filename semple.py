@@ -91,23 +91,67 @@ def get_campaign_stats(token, date):
         print(f"⚠️ Ошибка соединения: {e}")
         return None
 
+def check_and_create_table(conn):
+    """Проверяем существование таблицы и создаем при необходимости"""
+    with conn.cursor() as cursor:
+        try:
+            # Проверяем существование таблицы
+            cursor.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables 
+                WHERE table_schema = 'rdl' 
+                AND table_name = 'yd_ad_performance_report'
+            )
+            """)
+            exists = cursor.fetchone()[0]
+            
+            if not exists:
+                print("ℹ️ Таблица rdl.yd_ad_performance_report не найдена, создаем...")
+                cursor.execute("""
+                CREATE TABLE rdl.yd_ad_performance_report (
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    campaign_id BIGINT NOT NULL,
+                    campaign_name TEXT NOT NULL,
+                    ad_id BIGINT NOT NULL,
+                    impressions INTEGER,
+                    clicks INTEGER,
+                    cost DECIMAL(18, 2),
+                    avg_click_position DECIMAL(10, 2),
+                    device TEXT,
+                    location_of_presence_id INTEGER NOT NULL,
+                    match_type TEXT,
+                    slot TEXT,
+                    load_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (date, campaign_id, campaign_name, ad_id, location_of_presence_id)
+                )
+                """)
+                conn.commit()
+                print("✅ Таблица успешно создана")
+            else:
+                print("✅ Таблица существует")
+                
+        except Exception as e:
+            print(f"💥 Ошибка при работе с таблицей: {e}")
+            conn.rollback()
+            raise Exception("Не удалось проверить/создать таблицу")
+
 def save_to_db(conn, raw_data):
-    """Сохраняем данные в существующую таблицу rdl.yd_ad_performance_report"""
+    """Сохраняем данные в таблицу rdl.yd_ad_performance_report"""
     if not raw_data:
         print("❌ Нет данных для сохранения")
         return
 
     lines = raw_data.strip().split('\n')
     
-    # Пропускаем заголовки и строку с Total rows
-    data_lines = []
-    for line in lines:
-        if line.startswith('Date\tCampaignId'):  # Заголовки
-            continue
-        if line.startswith('Total rows'):  # Итоговая строка
-            continue
-        if line.strip():  # Только непустые строки
-            data_lines.append(line)
+    # Фильтруем строки: пропускаем заголовки и строку с Total rows
+    data_lines = [
+        line for line in lines 
+        if line.strip() 
+        and not line.startswith('Date\tCampaignId') 
+        and not line.startswith('Total rows')
+        and not line.startswith('"report_')  # Пропускаем строку с именем отчета
+    ]
 
     if not data_lines:
         print("❌ Нет данных для сохранения (после фильтрации)")
@@ -160,46 +204,29 @@ def save_to_db(conn, raw_data):
                 total += 1
             except Exception as e:
                 print(f"⚠️ Ошибка обработки строки: {line[:50]}...\nОшибка: {str(e)}")
+                conn.rollback()
+                return
         
         conn.commit()
         print(f"💾 Успешно сохранено строк: {total}")
-
-def check_table_exists(conn):
-    """Проверяем существование таблицы"""
-    with conn.cursor() as cursor:
-        cursor.execute("""
-        SELECT EXISTS (
-            SELECT 1 FROM information_schema.tables 
-            WHERE table_schema = 'rdl' 
-            AND table_name = 'yd_ad_performance_report'
-        )
-        """)
-        exists = cursor.fetchone()[0]
-        if not exists:
-            raise Exception("Таблица rdl.yd_ad_performance_report не найдена")
-    print("✅ Таблица rdl.yd_ad_performance_report доступна")
 
 def main():
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         print("🔌 Подключение к БД установлено")
         
-        create_table(conn)
+        check_and_create_table(conn)
         
         print(f"📅 Запрашиваем данные за {DATE}")
         raw_data = get_campaign_stats(YANDEX_TOKEN, DATE)
         
         if raw_data:
             save_to_db(conn, raw_data)
-        
+            
     except Exception as e:
-        print(f"💥 Критическая ошибка: {e}")
+        print(f"💥 Критическая ошибка: {str(e)}")
     finally:
         if 'conn' in locals():
             conn.close()
             print("🔌 Соединение с БД закрыто")
     print("🔴 Завершение работы")
-
-if __name__ == "__main__":
-    print("🟢 Запуск скрипта")
-    main()
