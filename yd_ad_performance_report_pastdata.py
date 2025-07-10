@@ -3,10 +3,8 @@ import logging
 import time
 import uuid
 import configparser
-from datetime import datetime, timedelta
 import psycopg2
 import os
-from psycopg2.extras import execute_batch
 
 # Настройка логирования
 log_file = '/var/log/yandex_direct_loader.log'
@@ -73,22 +71,6 @@ def create_table_if_not_exists(conn):
                 PRIMARY KEY (date, campaign_id, ad_id)
             )
         """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS rdl.yd_raw_data (
-                id SERIAL PRIMARY KEY,
-                date DATE NOT NULL,
-                raw_data TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-        conn.commit()
-
-def save_raw_data_to_db(conn, date, raw_data):
-    with conn.cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO rdl.yd_raw_data (date, raw_data) VALUES (%s, %s)",
-            (date, raw_data)
-        )
         conn.commit()
 
 def get_campaign_stats(token, date):
@@ -138,93 +120,6 @@ def get_campaign_stats(token, date):
     
     return None
 
-def process_data(conn, raw_data, date):
-    """Полностью переработанная функция обработки данных"""
-    if not raw_data:
-        logger.error("Получены пустые данные")
-        return []
-
-    # Разделяем строки и удаляем пустые
-    lines = [line.strip() for line in raw_data.split('\n') if line.strip()]
-    if not lines:
-        logger.error("Нет данных для обработки после разделения строк")
-        return []
-
-    # Находим строку с заголовками
-    header_line = None
-    for line in lines:
-        if line.startswith('Date\t') or line.startswith('Дата\t'):
-            header_line = line
-            break
-
-    if not header_line:
-        logger.error("Не найдена строка с заголовками")
-        return []
-
-    # Определяем индексы столбцов
-    headers = header_line.split('\t')
-    try:
-        date_idx = headers.index('Date') if 'Date' in headers else headers.index('Дата')
-        campaign_id_idx = headers.index('CampaignId')
-        campaign_name_idx = headers.index('CampaignName')
-        ad_id_idx = headers.index('AdId')
-        impressions_idx = headers.index('Impressions')
-        clicks_idx = headers.index('Clicks')
-        cost_idx = headers.index('Cost')
-        avg_pos_idx = headers.index('AvgClickPosition')
-        device_idx = headers.index('Device')
-        location_idx = headers.index('LocationOfPresenceId')
-        match_type_idx = headers.index('MatchType')
-        slot_idx = headers.index('Slot')
-    except ValueError as e:
-        logger.error(f"Не найден ожидаемый столбец: {str(e)}")
-        return []
-
-    data = []
-    for line in lines:
-        # Пропускаем строку заголовков и служебные строки
-        if line == header_line or not line or line.startswith('ReportName'):
-            continue
-
-        parts = line.split('\t')
-        if len(parts) != len(headers):
-            logger.warning(f"Пропущена строка (несоответствие столбцов): {line[:200]}...")
-            continue
-
-        try:
-            # Обработка каждой записи
-            record = {
-                'Date': parts[date_idx],
-                'CampaignId': int(parts[campaign_id_idx]),
-                'CampaignName': parts[campaign_name_idx],
-                'AdId': int(parts[ad_id_idx]),
-                'Impressions': int(parts[impressions_idx]) if parts[impressions_idx] else 0,
-                'Clicks': int(parts[clicks_idx]) if parts[clicks_idx] else 0,
-                'Cost': float(parts[cost_idx].replace(',', '.')) / 1000000 if parts[cost_idx] and parts[cost_idx] != '--' else 0.0,
-                'AvgClickPosition': float(parts[avg_pos_idx].replace(',', '.')) if parts[avg_pos_idx] and parts[avg_pos_idx] != '--' else None,
-                'Device': parts[device_idx],
-                'LocationOfPresenceId': int(parts[location_idx]) if parts[location_idx] else None,
-                'MatchType': parts[match_type_idx],
-                'Slot': parts[slot_idx]
-            }
-            data.append(record)
-        except Exception as e:
-            logger.error(f"Ошибка обработки строки: {line[:200]}... Ошибка: {str(e)}")
-            continue
-
-    # Дополнительная проверка данных
-    if data:
-        logger.info(f"Успешно обработано {len(data)} записей за {date}")
-        logger.info("Пример первой записи:")
-        logger.info(f"CampaignId: {data[0]['CampaignId']}")
-        logger.info(f"AdId: {data[0]['AdId']}")
-        logger.info(f"Impressions: {data[0]['Impressions']}")
-        logger.info(f"Clicks: {data[0]['Clicks']}")
-    else:
-        logger.error("Нет данных после обработки")
-
-    return data
-
 def main():
     try:
         config = load_config()
@@ -249,32 +144,36 @@ def main():
                 current_date += timedelta(days=1)
                 continue
 
-            save_raw_data_to_db(conn, current_date, raw_data)
-
-            data = process_data(conn, raw_data, date_str)
-            if data:
-                with conn.cursor() as cursor:
-                    execute_batch(cursor, """
-                        INSERT INTO rdl.yd_ad_performance_report (
-                            date, campaign_id, campaign_name, ad_id, impressions, clicks,
-                            cost, avg_click_position, device, location_of_presence_id,
-                            match_type, slot
-                        ) VALUES (
-                            %(Date)s, %(CampaignId)s, %(CampaignName)s, %(AdId)s,
-                            %(Impressions)s, %(Clicks)s, %(Cost)s, %(AvgClickPosition)s,
-                            %(Device)s, %(LocationOfPresenceId)s, %(MatchType)s, %(Slot)s
-                        ) ON CONFLICT (date, campaign_id, ad_id) DO UPDATE SET
-                            impressions = EXCLUDED.impressions,
-                            clicks = EXCLUDED.clicks,
-                            cost = EXCLUDED.cost,
-                            avg_click_position = EXCLUDED.avg_click_position,
-                            device = EXCLUDED.device,
-                            location_of_presence_id = EXCLUDED.location_of_presence_id,
-                            match_type = EXCLUDED.match_type,
-                            slot = EXCLUDED.slot
-                    """, data)
-                    conn.commit()
-                    log_console(f"Сохранено {len(data)} записей за {date_str}")
+            # Сохраняем сырые данные в таблицу rdl.yd_ad_performance_report
+            with conn.cursor() as cursor:
+                lines = raw_data.split('\n')
+                for line in lines[1:]:  # Пропускаем заголовок
+                    if line.strip():  # Если строка не пустая
+                        parts = line.split('\t')
+                        try:
+                            cursor.execute("""
+                                INSERT INTO rdl.yd_ad_performance_report (
+                                    date, campaign_id, campaign_name, ad_id, impressions,
+                                    clicks, cost, avg_click_position, device,
+                                    location_of_presence_id, match_type, slot
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (
+                                parts[0],  # Date
+                                int(parts[1]),  # CampaignId
+                                parts[2],  # CampaignName
+                                int(parts[3]),  # AdId
+                                int(parts[4]) if parts[4] else 0,  # Impressions
+                                int(parts[5]) if parts[5] else 0,  # Clicks
+                                float(parts[6].replace(',', '.')) / 1000000 if parts[6] and parts[6] != '--' else 0.0,  # Cost
+                                float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,  # AvgClickPosition
+                                parts[8],  # Device
+                                int(parts[9]) if parts[9] else None,  # LocationOfPresenceId
+                                parts[10],  # MatchType
+                                parts[11]  # Slot
+                            ))
+                        except Exception as e:
+                            logger.error(f"Ошибка при вставке данных: {line} Ошибка: {str(e)}")
+                conn.commit()
 
             current_date += timedelta(days=1)
             time.sleep(REQUEST_DELAY)
