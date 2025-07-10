@@ -139,56 +139,90 @@ def get_campaign_stats(token, date):
     return None
 
 def process_data(conn, raw_data, date):
-    """Корректная обработка TSV данных"""
+    """Полностью переработанная функция обработки данных"""
     if not raw_data:
+        logger.error("Получены пустые данные")
         return []
-    
-    lines = [line for line in raw_data.split('\n') if line.strip()]
+
+    # Разделяем строки и удаляем пустые
+    lines = [line.strip() for line in raw_data.split('\n') if line.strip()]
     if not lines:
+        logger.error("Нет данных для обработки после разделения строк")
         return []
-    
-    header = []
-    data_lines = []
-    
+
+    # Находим строку с заголовками
+    header_line = None
     for line in lines:
-        if line.startswith('Дата\t'):
-            header = line.strip().split('\t')
-        else:
-            data_lines.append(line)
-    
-    if not header:
-        logger.error("Не найден заголовок в TSV данных")
+        if line.startswith('Date\t') or line.startswith('Дата\t'):
+            header_line = line
+            break
+
+    if not header_line:
+        logger.error("Не найдена строка с заголовками")
         return []
-    
-    expected_columns = 12  # Количество ожидаемых столбцов
-    
+
+    # Определяем индексы столбцов
+    headers = header_line.split('\t')
+    try:
+        date_idx = headers.index('Date') if 'Date' in headers else headers.index('Дата')
+        campaign_id_idx = headers.index('CampaignId')
+        campaign_name_idx = headers.index('CampaignName')
+        ad_id_idx = headers.index('AdId')
+        impressions_idx = headers.index('Impressions')
+        clicks_idx = headers.index('Clicks')
+        cost_idx = headers.index('Cost')
+        avg_pos_idx = headers.index('AvgClickPosition')
+        device_idx = headers.index('Device')
+        location_idx = headers.index('LocationOfPresenceId')
+        match_type_idx = headers.index('MatchType')
+        slot_idx = headers.index('Slot')
+    except ValueError as e:
+        logger.error(f"Не найден ожидаемый столбец: {str(e)}")
+        return []
+
     data = []
-    for line in data_lines:
-        parts = line.strip().split('\t')
-        if len(parts) != expected_columns:
+    for line in lines:
+        # Пропускаем строку заголовков и служебные строки
+        if line == header_line or not line or line.startswith('ReportName'):
+            continue
+
+        parts = line.split('\t')
+        if len(parts) != len(headers):
             logger.warning(f"Пропущена строка (несоответствие столбцов): {line[:200]}...")
             continue
-        
+
         try:
+            # Обработка каждой записи
             record = {
-                'Date': parts[0],
-                'CampaignId': int(parts[1]) if parts[1] else 0,
-                'CampaignName': parts[2] if parts[2] else '',
-                'AdId': int(parts[3]) if parts[3] else 0,
-                'Impressions': int(parts[4]) if parts[4] else 0,
-                'Clicks': int(parts[5]) if parts[5] else 0,
-                'Cost': float(parts[6].replace(',', '.')) / 1000000 if parts[6] and parts[6] != '--' else 0.0,
-                'AvgClickPosition': float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,
-                'Device': parts[8] if parts[8] else '',
-                'LocationOfPresenceId': int(parts[9]) if parts[9] else None,
-                'MatchType': parts[10] if parts[10] else '',
-                'Slot': parts[11] if parts[11] else ''
+                'Date': parts[date_idx],
+                'CampaignId': int(parts[campaign_id_idx]),
+                'CampaignName': parts[campaign_name_idx],
+                'AdId': int(parts[ad_id_idx]),
+                'Impressions': int(parts[impressions_idx]) if parts[impressions_idx] else 0,
+                'Clicks': int(parts[clicks_idx]) if parts[clicks_idx] else 0,
+                'Cost': float(parts[cost_idx].replace(',', '.')) / 1000000 if parts[cost_idx] and parts[cost_idx] != '--' else 0.0,
+                'AvgClickPosition': float(parts[avg_pos_idx].replace(',', '.')) if parts[avg_pos_idx] and parts[avg_pos_idx] != '--' else None,
+                'Device': parts[device_idx],
+                'LocationOfPresenceId': int(parts[location_idx]) if parts[location_idx] else None,
+                'MatchType': parts[match_type_idx],
+                'Slot': parts[slot_idx]
             }
             data.append(record)
         except Exception as e:
             logger.error(f"Ошибка обработки строки: {line[:200]}... Ошибка: {str(e)}")
             continue
-    
+
+    # Дополнительная проверка данных
+    if data:
+        logger.info(f"Успешно обработано {len(data)} записей за {date}")
+        logger.info("Пример первой записи:")
+        logger.info(f"CampaignId: {data[0]['CampaignId']}")
+        logger.info(f"AdId: {data[0]['AdId']}")
+        logger.info(f"Impressions: {data[0]['Impressions']}")
+        logger.info(f"Clicks: {data[0]['Clicks']}")
+    else:
+        logger.error("Нет данных после обработки")
+
     return data
 
 def main():
