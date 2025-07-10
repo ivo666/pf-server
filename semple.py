@@ -17,10 +17,10 @@ DB_CONFIG = {
 }
 
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
-DATE = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+DATE = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")  # Фиксируем вчерашнюю дату
 
 def create_table(conn):
-    """Создаём таблицу с автоинкрементным id и всеми полями"""
+    """Создаём таблицу с автоинкрементным id"""
     with conn.cursor() as cursor:
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS yandex_direct_stats (
@@ -45,7 +45,7 @@ def create_table(conn):
     print("✅ Таблица создана/проверена")
 
 def get_campaign_stats(token, date):
-    """Получаем данные из API Яндекс.Директ"""
+    """Получаем данные из API Яндекс.Директ с обработкой ошибок"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
@@ -60,6 +60,7 @@ def get_campaign_stats(token, date):
                 "Impressions", "Clicks", "Cost", "AvgClickPosition",
                 "Device", "LocationOfPresenceId", "MatchType", "Slot"
             ],
+            "ReportName": f"report_{date.replace('-', '')}",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -79,32 +80,31 @@ def get_campaign_stats(token, date):
         if response.status_code == 200:
             return response.text
         elif response.status_code == 201:
-            print("🔄 Отчет формируется, повторите запрос позже")
+            print("🔄 Отчет формируется, повторите запрос через 30 секунд")
+            time.sleep(30)
+            return get_campaign_stats(token, date)
         else:
-            print(f"❌ Ошибка API: {response.status_code} - {response.text}")
+            print(f"❌ Ошибка API: {response.status_code}\n{response.text}")
+            return None
+            
     except Exception as e:
         print(f"⚠️ Ошибка соединения: {e}")
-    
-    return None
+        return None
 
 def save_to_db(conn, raw_data):
-    """Парсим и сохраняем данные в PostgreSQL"""
+    """Сохраняем данные в PostgreSQL"""
     if not raw_data:
         print("❌ Нет данных для сохранения")
         return
 
     with conn.cursor() as cursor:
-        total_rows = 0
-        for line in raw_data.strip().split('\n')[1:]:  # Пропускаем заголовок
+        total = 0
+        for line in raw_data.strip().split('\n')[1:]:
             if not line or "Total rows" in line:
                 continue
 
             parts = line.split('\t')
             try:
-                # Преобразование данных
-                cost = float(parts[6].replace(',', '.')) / 1000000 if parts[6] else 0
-                avg_pos = float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None
-
                 cursor.execute("""
                 INSERT INTO yandex_direct_stats (
                     date, campaign_id, campaign_name, ad_id,
@@ -114,40 +114,38 @@ def save_to_db(conn, raw_data):
                 ON CONFLICT (date, campaign_id, ad_id, device) DO UPDATE SET
                     impressions = EXCLUDED.impressions,
                     clicks = EXCLUDED.clicks,
-                    cost = EXCLUDED.cost,
-                    avg_click_position = EXCLUDED.avg_click_position
+                    cost = EXCLUDED.cost
                 """, (
-                    parts[0], int(parts[1]), parts[2], int(parts[3]),
+                    parts[0],
+                    int(parts[1]),
+                    parts[2],
+                    int(parts[3]),
                     int(parts[4]) if parts[4] else 0,
                     int(parts[5]) if parts[5] else 0,
-                    cost,
-                    avg_pos,
+                    float(parts[6].replace(',', '.')) / 1000000 if parts[6] else 0,
+                    float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,
                     parts[8],
                     int(parts[9]) if parts[9] else None,
                     parts[10],
                     parts[11]
                 ))
-                total_rows += 1
+                total += 1
             except Exception as e:
-                print(f"⚠️ Ошибка обработки строки: {line}\nОшибка: {e}")
-
+                print(f"⚠️ Ошибка строки {line[:50]}...: {e}")
+        
         conn.commit()
-        print(f"💾 Сохранено строк: {total_rows}")
+        print(f"💾 Сохранено строк: {total}")
 
 def main():
     try:
-        # Подключение к БД
         conn = psycopg2.connect(**DB_CONFIG)
         print("🔌 Подключение к БД установлено")
         
-        # Создание таблицы
         create_table(conn)
         
-        # Получение данных
         print(f"📅 Запрашиваем данные за {DATE}")
         raw_data = get_campaign_stats(YANDEX_TOKEN, DATE)
         
-        # Сохранение в БД
         if raw_data:
             save_to_db(conn, raw_data)
         
@@ -157,8 +155,8 @@ def main():
         if 'conn' in locals():
             conn.close()
             print("🔌 Соединение с БД закрыто")
+    print("🔴 Завершение работы")
 
 if __name__ == "__main__":
     print("🟢 Запуск скрипта")
     main()
-    print("🔴 Завершение работы")
