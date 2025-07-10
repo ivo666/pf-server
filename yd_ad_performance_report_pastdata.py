@@ -8,11 +8,10 @@ import psycopg2
 import os
 from psycopg2.extras import execute_batch
 
-# Настройка логирования ТОЛЬКО в файл
+# Настройка логирования
 log_file = '/var/log/yandex_direct_loader.log'
 os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-# Основной логгер для записи в файл (все уровни)
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -20,14 +19,13 @@ logging.basicConfig(
     force=True
 )
 
-# Создаем отдельный логгер для вывода в консоль (только важные сообщения)
 console_logger = logging.getLogger('console')
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 formatter = logging.Formatter('%(message)s')
 console_handler.setFormatter(formatter)
 console_logger.addHandler(console_handler)
-console_logger.propagate = False  # Предотвращаем дублирование в файл
+console_logger.propagate = False
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +36,9 @@ RETRY_DELAY = 30
 WEEKLY_REPORT = True
 
 def log_console(message):
-    """Выводит сообщение только в консоль (без технических деталей)"""
     console_logger.info(message)
 
 def load_config():
-    """Загружает конфигурацию из config.ini"""
     config = configparser.ConfigParser()
     config.read('config.ini')
     
@@ -65,22 +61,25 @@ def load_config():
     }
 
 def create_table_if_not_exists(conn):
-    """Создает целевую таблицу, если она не существует"""
     create_table_sql = """
     CREATE TABLE IF NOT EXISTS rdl.yd_ad_performance_report (
         date DATE NOT NULL,
-        campaign_id BIGINT NOT NULL,
-        campaign_name TEXT,
-        ad_id BIGINT NOT NULL,
-        clicks INTEGER,
-        impressions INTEGER,
-        cost DECIMAL(18, 2),
-        avg_click_position DECIMAL(10, 2),
-        device TEXT,
-        location_of_presence_id INTEGER,
-        match_type TEXT,
-        slot TEXT,
-        CONSTRAINT pk_yd_ad_performance PRIMARY KEY (date, campaign_id, ad_id)
+        ad_id VARCHAR(20) NOT NULL,
+        ad_format TEXT,
+        impressions INTEGER DEFAULT 0,
+        clicks INTEGER DEFAULT 0,
+        ctr DECIMAL(5,2),
+        cost DECIMAL(18,2) DEFAULT 0.0,
+        avg_cpc DECIMAL(18,2),
+        avg_pageviews DECIMAL(5,2),
+        avg_traffic_volume DECIMAL(5,2),
+        conversions INTEGER DEFAULT 0,
+        conversion_rate DECIMAL(5,2),
+        cost_per_conversion DECIMAL(18,2),
+        roi DECIMAL(5,2),
+        revenue DECIMAL(18,2) DEFAULT 0.0,
+        profit DECIMAL(18,2) DEFAULT 0.0,
+        PRIMARY KEY (date, ad_id)
     )
     """
     
@@ -97,7 +96,6 @@ def create_table_if_not_exists(conn):
         raise
 
 def check_existing_data(conn, date_range):
-    """Проверяет наличие данных за указанный период"""
     check_sql = """
     SELECT COUNT(*) FROM rdl.yd_ad_performance_report 
     WHERE date BETWEEN %s AND %s
@@ -112,7 +110,6 @@ def check_existing_data(conn, date_range):
         raise
 
 def save_to_database(data, db_config, date_range):
-    """Сохраняет данные в PostgreSQL"""
     conn = None
     try:
         conn = psycopg2.connect(**db_config)
@@ -124,12 +121,14 @@ def save_to_database(data, db_config, date_range):
         
         insert_sql = """
         INSERT INTO rdl.yd_ad_performance_report (
-            date, campaign_id, campaign_name, ad_id, clicks, impressions, cost, 
-            avg_click_position, device, location_of_presence_id, match_type, slot
+            date, ad_id, ad_format, impressions, clicks, ctr, cost,
+            avg_cpc, avg_pageviews, avg_traffic_volume, conversions,
+            conversion_rate, cost_per_conversion, roi, revenue, profit
         ) VALUES (
-            %(Date)s, %(CampaignId)s, %(CampaignName)s, %(AdId)s, %(Clicks)s, 
-            %(Impressions)s, %(Cost)s, %(AvgClickPosition)s, %(Device)s, 
-            %(LocationOfPresenceId)s, %(MatchType)s, %(Slot)s
+            %(Date)s, %(AdId)s, %(AdFormat)s, %(Impressions)s, %(Clicks)s,
+            %(Ctr)s, %(Cost)s, %(AvgCpc)s, %(AvgPageviews)s,
+            %(AvgTrafficVolume)s, %(Conversions)s, %(ConversionRate)s,
+            %(CostPerConversion)s, %(Roi)s, %(Revenue)s, %(Profit)s
         ) ON CONFLICT DO NOTHING
         """
         
@@ -148,59 +147,73 @@ def save_to_database(data, db_config, date_range):
             conn.close()
 
 def parse_tsv_data(tsv_data):
-    """Парсит TSV данные из API"""
     if not tsv_data or not tsv_data.strip():
-        logger.error("Empty TSV data received")
+        logger.error("Получены пустые данные")
         return None
         
-    data = []
-    error_count = 0
+    lines = [line for line in tsv_data.split('\n') 
+             if line.strip() and not line.startswith('Дата\t')]
     
-    for line in [line for line in tsv_data.split('\n') if line.strip() and not line.startswith('Date\t')]:
+    data = []
+    for line in lines:
         try:
             parts = line.strip().split('\t')
-            if len(parts) >= 12:
-                # Обработка специальных значений
-                avg_pos = None if parts[7] in ('--', '') else float(parts[7])
-                cost = None if parts[6] in ('--', '') else float(parts[6]) / 1000000
-                
-                data.append({
+            if len(parts) >= 16:
+                record = {
                     'Date': parts[0],
-                    'CampaignId': int(parts[1]) if parts[1] else None,
-                    'CampaignName': parts[2],
-                    'AdId': int(parts[3]) if parts[3] else None,
-                    'Clicks': int(parts[4]) if parts[4] else None,
-                    'Impressions': int(parts[5]) if parts[5] else None,
-                    'Cost': cost,
-                    'AvgClickPosition': avg_pos,
-                    'Device': parts[8],
-                    'LocationOfPresenceId': int(parts[9]) if parts[9] else None,
-                    'MatchType': parts[10],
-                    'Slot': parts[11]
-                })
+                    'AdId': f"M-{parts[1]}" if parts[1] else None,
+                    'AdFormat': parts[2],
+                    'Impressions': int(parts[3]) if parts[3] else 0,
+                    'Clicks': int(parts[4]) if parts[4] else 0,
+                    'Ctr': float(parts[5].replace(',', '.')) if parts[5] not in ('--', '') else None,
+                    'Cost': float(parts[6].replace(',', '.')) if parts[6] not in ('--', '') else 0.0,
+                    'AvgCpc': float(parts[7].replace(',', '.')) if parts[7] not in ('--', '') else None,
+                    'AvgPageviews': float(parts[8].replace(',', '.')) if parts[8] not in ('--', '') else None,
+                    'AvgTrafficVolume': float(parts[9].replace(',', '.')) if parts[9] not in ('--', '') else None,
+                    'Conversions': int(parts[10]) if parts[10] else 0,
+                    'ConversionRate': float(parts[11].replace(',', '.')) if parts[11] not in ('--', '') else None,
+                    'CostPerConversion': float(parts[12].replace(',', '.')) if parts[12] not in ('--', '') else None,
+                    'Roi': float(parts[13].replace(',', '.')) if parts[13] not in ('--', '') else None,
+                    'Revenue': float(parts[14].replace(',', '.')) if parts[14] not in ('--', '') else 0.0,
+                    'Profit': float(parts[15].replace(',', '.')) if parts[15] not in ('--', '') else 0.0
+                }
+                data.append(record)
         except Exception as e:
-            error_count += 1
-            logger.debug(f"Error parsing line (skipped): {line[:100]}... Error: {str(e)}")
+            logger.warning(f"Ошибка обработки строки: {line[:100]}... Ошибка: {str(e)}")
+            continue
     
-    if error_count > 0:
-        logger.warning(f"Skipped {error_count} rows due to parsing errors")
-    
+    if data:
+        logger.debug(f"Первые 3 строки данных: {data[:3]}")
     return data if data else None
 
 def get_campaign_stats(token, date_from, date_to):
-    """Получает статистику из API Яндекс.Директ"""
     headers = {
         "Authorization": f"Bearer {token}",
-        "Accept-Language": "en",
+        "Accept-Language": "ru",
         "Content-Type": "application/json"
     }
 
     body = {
         "params": {
             "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
-            "FieldNames": ["Date", "CampaignId", "CampaignName", "AdId", "Clicks", 
-                          "Impressions", "Cost", "AvgClickPosition", "Device", 
-                          "LocationOfPresenceId", "MatchType", "Slot"],
+            "FieldNames": [
+                "Date",
+                "AdId",
+                "AdFormat",
+                "Impressions",
+                "Clicks",
+                "Ctr",
+                "Cost",
+                "AvgCpc",
+                "AvgPageviews",
+                "AvgTrafficVolume",
+                "Conversions",
+                "ConversionRate",
+                "CostPerConversion",
+                "Roi",
+                "Revenue",
+                "Profit"
+            ],
             "ReportName": f"report_{uuid.uuid4().hex[:8]}",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
@@ -240,7 +253,6 @@ def get_campaign_stats(token, date_from, date_to):
     return None
 
 def get_date_ranges(start_date, end_date):
-    """Генерирует диапазоны дат"""
     start = datetime.strptime(start_date, "%Y-%m-%d").date()
     end = datetime.strptime(end_date, "%Y-%m-%d").date()
     
