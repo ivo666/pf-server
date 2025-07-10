@@ -1,9 +1,11 @@
 import requests
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 
-# Константы
 YANDEX_TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"  # Замените на реальный токен
-DATE = "2025-07-01"
+DATE = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")  # Данные за вчера
+MAX_RETRIES = 3
+RETRY_DELAY = 30
 
 def get_campaign_stats(token, date):
     headers = {
@@ -15,43 +17,38 @@ def get_campaign_stats(token, date):
     body = {
         "params": {
             "SelectionCriteria": {"DateFrom": date, "DateTo": date},
-            "FieldNames": [
-                "Date", "CampaignId", "CampaignName", "AdId",
-                "Impressions", "Clicks", "Cost", "AvgClickPosition",
-                "Device", "LocationOfPresenceId", "MatchType", "Slot"
-            ],
-            "ReportName": "ad_performance_report",
+            "FieldNames": ["Date", "CampaignId", "Clicks", "Cost"],
+            "ReportName": "test_report",
             "ReportType": "AD_PERFORMANCE_REPORT",
-            "DateRangeType": "CUSTOM_DATE",
-            "Format": "TSV",
-            "IncludeVAT": "YES",
-            "IncludeDiscount": "NO"
+            "Format": "TSV"
         }
     }
 
-    response = requests.post(
-        "https://api.direct.yandex.com/json/v5/reports",
-        headers=headers,
-        json=body,
-        timeout=120
-    )
-
-    if response.status_code == 200:
-        return response.text
-    else:
-        print(f"Ошибка API: {response.status_code} - {response.text}")
-        return None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.post(
+                "https://api.direct.yandex.com/json/v5/reports",
+                headers=headers,
+                json=body,
+                timeout=120
+            )
+            if response.status_code == 200:
+                return response.text
+            elif response.status_code == 201:
+                print(f"Ожидаем готовность отчёта... (попытка {attempt + 1})")
+                time.sleep(RETRY_DELAY)
+            else:
+                print(f"Ошибка: {response.status_code}\n{response.text}")
+                return None
+        except Exception as e:
+            print(f"Ошибка соединения: {e}")
+            return None
+    return None
 
 def main():
-    print(f"Запрашиваем данные за {DATE}")
-    
-    raw_data = get_campaign_stats(YANDEX_TOKEN, DATE)
-    if not raw_data:
-        print("Нет данных")
-        return
-    
-    print("\nПолученные данные:")
-    print(raw_data)
+    print(f"Запрос данных за {DATE}")
+    data = get_campaign_stats(YANDEX_TOKEN, DATE)
+    print("Результат:\n", data if data else "Данные не получены")
 
 if __name__ == "__main__":
     main()
