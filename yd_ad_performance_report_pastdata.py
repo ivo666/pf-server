@@ -159,6 +159,11 @@ def main():
                     if line.strip():  # Если строка не пустая
                         parts = line.split('\t')
 
+                        # Игнорируем строки с информацией о количестве строк
+                        if "Total rows:" in line:
+                            log_console(f"Игнорируется строка с количеством: {line}")
+                            continue
+
                         # Логируем данные перед вставкой
                         log_console(f"Вставка данных: {parts}")
 
