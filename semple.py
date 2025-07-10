@@ -25,12 +25,19 @@ def get_campaign_stats(token, date):
                 "Date",
                 "CampaignId",
                 "CampaignName",
+                "AdId",
+                "Impressions",
                 "Clicks",
-                "Cost"
+                "Cost",
+                "AvgClickPosition",
+                "Device",
+                "LocationOfPresenceId",
+                "MatchType",
+                "Slot"
             ],
-            "ReportName": "API_Report",
+            "ReportName": "API_Report_Extended",
             "ReportType": "AD_PERFORMANCE_REPORT",
-            "DateRangeType": "CUSTOM_DATE",  # Обязательное поле!
+            "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
             "IncludeVAT": "YES",
             "IncludeDiscount": "NO"
