@@ -30,22 +30,23 @@ console_logger.propagate = False
 logger = logging.getLogger(__name__)
 
 # Константы
-REQUEST_DELAY = 15
-MAX_RETRIES = 3
-RETRY_DELAY = 30
-DAILY_REPORT = True  # Изменили на дневные отчеты
+REQUEST_DELAY = 15  # Задержка между запросами
+MAX_RETRIES = 3     # Максимальное количество попыток
+RETRY_DELAY = 30    # Задержка между попытками
 
 def log_console(message):
+    """Вывод сообщений в консоль"""
     console_logger.info(message)
 
 def load_config():
+    """Загрузка конфигурации из файла"""
     config = configparser.ConfigParser()
     config.read('config.ini')
     
     required_sections = ['Database', 'YandexDirect']
     for section in required_sections:
         if not config.has_section(section):
-            raise ValueError(f"Section '{section}' not found in config.ini")
+            raise ValueError(f"Раздел '{section}' не найден в config.ini")
     
     return {
         'db': {
@@ -61,6 +62,7 @@ def load_config():
     }
 
 def create_table_if_not_exists(conn):
+    """Создание таблицы в БД если она не существует"""
     create_table_sql = """
     CREATE TABLE IF NOT EXISTS rdl.yd_ad_performance_report (
         date DATE NOT NULL,
@@ -86,13 +88,11 @@ def create_table_if_not_exists(conn):
             conn.commit()
             log_console("Таблица проверена/создана")
     except Exception as e:
-        logger.error(f"Error creating table: {str(e)}")
-        log_console("Ошибка при создании таблицы")
-        conn.rollback()
+        logger.error(f"Ошибка создания таблицы: {str(e)}")
         raise
 
 def check_existing_data(conn, date):
-    """Проверяет наличие данных за указанную дату"""
+    """Проверка наличия данных за указанную дату"""
     check_sql = """
     SELECT COUNT(*) FROM rdl.yd_ad_performance_report 
     WHERE date = %s
@@ -103,10 +103,11 @@ def check_existing_data(conn, date):
             cursor.execute(check_sql, (date,))
             return cursor.fetchone()[0] > 0
     except Exception as e:
-        logger.error(f"Error checking existing data: {str(e)}")
+        logger.error(f"Ошибка проверки данных: {str(e)}")
         raise
 
 def save_to_database(data, db_config, date):
+    """Сохранение данных в PostgreSQL"""
     conn = None
     try:
         conn = psycopg2.connect(**db_config)
@@ -134,21 +135,20 @@ def save_to_database(data, db_config, date):
             return True
             
     except Exception as e:
-        logger.error(f"Database error: {str(e)}")
-        log_console("Ошибка при сохранении в базу данных")
+        logger.error(f"Ошибка базы данных: {str(e)}")
         raise
     finally:
         if conn:
             conn.close()
 
 def parse_tsv_data(tsv_data):
-    """Парсит TSV данные с нужными полями"""
+    """Парсинг TSV данных из API"""
     if not tsv_data or not tsv_data.strip():
         logger.error("Получены пустые данные")
         return None
         
     lines = [line for line in tsv_data.split('\n') 
-             if line.strip() and not line.startswith('Date\t')]
+             if line.strip() and not line.startswith('Дата\t')]
     
     data = []
     for line in lines:
@@ -181,8 +181,49 @@ def parse_tsv_data(tsv_data):
         logger.debug(f"Первые 3 строки данных: {data[:3]}")
     return data if data else None
 
+def check_token(token):
+    """Проверка валидности токена"""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept-Language": "ru",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # Тестовый запрос минимального отчета
+        test_body = {
+            "params": {
+                "SelectionCriteria": {"DateFrom": "2000-01-01", "DateTo": "2000-01-01"},
+                "FieldNames": ["Date"],
+                "ReportName": "token_check",
+                "ReportType": "AD_PERFORMANCE_REPORT",
+                "DateRangeType": "CUSTOM_DATE",
+                "Format": "TSV",
+                "IncludeVAT": "YES",
+                "IncludeDiscount": "NO"
+            }
+        }
+        
+        response = requests.post(
+            "https://api.direct.yandex.com/json/v5/reports",
+            headers=headers,
+            json=test_body,
+            timeout=10
+        )
+        
+        # Любой ответ кроме 403 означает, что токен работает
+        if response.status_code != 403:
+            return True
+            
+        logger.error(f"Токен недействителен: {response.status_code} - {response.text}")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Ошибка проверки токена: {str(e)}")
+        return False
+
 def get_campaign_stats(token, date):
-    """Запрашивает данные за один день"""
+    """Получение статистики из API Яндекс.Директ"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
@@ -196,7 +237,7 @@ def get_campaign_stats(token, date):
                 "Date",
                 "CampaignId",
                 "CampaignName",
-                "AdId",
+                "AdId", 
                 "Clicks",
                 "Impressions",
                 "Cost",
@@ -229,38 +270,27 @@ def get_campaign_stats(token, date):
                 return response.text
             elif response.status_code == 201:
                 wait_time = RETRY_DELAY * (attempt + 1)
-                log_console(f"Отчет формируется, ожидание {wait_time} секунд...")
+                log_console(f"Отчет формируется, ожидание {wait_time} сек...")
                 time.sleep(wait_time)
                 continue
             elif response.status_code == 400:
                 error_data = response.json()
-                error_msg = error_data.get('error', {}).get('error_string', 'Неизвестная ошибка')
-                error_detail = error_data.get('error', {}).get('error_detail', 'Нет деталей')
-                logger.error(f"API error 400: {error_msg} - {error_detail}")
-                log_console(f"Ошибка в запросе: {error_msg}")
-                return None
-            elif response.status_code == 500:
-                logger.error(f"API error 500: {response.text}")
-                log_console("Внутренняя ошибка сервера Яндекс.Директ")
-                return None
-            elif response.status_code == 403:
-                logger.error(f"API error 403: {response.text}")
-                log_console("Ошибка авторизации. Проверьте токен доступа")
+                error_detail = error_data.get('error', {}).get('error_detail', '')
+                log_console(f"Ошибка в запросе: {error_detail}")
                 return None
             else:
-                logger.error(f"API error: {response.status_code} - {response.text}")
-                log_console(f"Ошибка API Яндекс.Директ (код {response.status_code})")
+                log_console(f"Ошибка API (код {response.status_code})")
                 return None
-            
+                
         except Exception as e:
-            logger.error(f"Request failed (attempt {attempt + 1}): {str(e)}")
+            logger.error(f"Ошибка соединения: {str(e)}")
             time.sleep(RETRY_DELAY * (attempt + 1))
     
     log_console("Превышено максимальное количество попыток")
     return None
 
 def get_dates(start_date, end_date):
-    """Генерирует список дней для запроса"""
+    """Генерация списка дат для обработки"""
     start = datetime.strptime(start_date, "%Y-%m-%d").date()
     end = datetime.strptime(end_date, "%Y-%m-%d").date()
     
@@ -271,41 +301,28 @@ def get_dates(start_date, end_date):
         current += timedelta(days=1)
     return dates
 
-def check_token(token):
-    """Проверяет валидность токена"""
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept-Language": "ru"
-    }
-    
-    try:
-        response = requests.get(
-            "https://api.direct.yandex.com/json/v5/agencyclients",
-            headers=headers,
-            timeout=10
-        )
-        if response.status_code == 200:
-            return True
-        logger.error(f"Token check failed: {response.status_code} - {response.text}")
-        return False
-    except Exception as e:
-        logger.error(f"Token check error: {str(e)}")
-        return False
-
 if __name__ == "__main__":
     try:
+        # Загрузка конфигурации
         config = load_config()
         log_console("Конфигурация загружена")
         
+        # Проверка токена
         if not check_token(config['yandex']['token']):
-            log_console("Ошибка проверки токена. Проверьте его корректность и права доступа")
+            log_console("Ошибка: токен не работает с API отчетов")
+            log_console("Убедитесь что:")
+            log_console("1. Токен действителен и не истек")
+            log_console("2. Имеет право direct:reports")
+            log_console("3. Активен в нужном кабинете Яндекс.Директ")
             exit(1)
             
+        # Определение дат для обработки
         end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start_date = "2025-07-01"
+        start_date = "2025-07-01"  # Начальная дата выгрузки
         
         dates = get_dates(start_date, end_date)
         
+        # Обработка данных по дням
         for date in dates:
             log_console(f"Обработка даты {date}")
             time.sleep(REQUEST_DELAY)
@@ -328,6 +345,6 @@ if __name__ == "__main__":
         log_console("Скрипт остановлен пользователем")
         exit(0)
     except Exception as e:
-        logger.error(f"Fatal error: {str(e)}", exc_info=True)
-        log_console(f"Критическая ошибка: {str(e)}")
+        logger.error(f"Критическая ошибка: {str(e)}", exc_info=True)
+        log_console(f"Скрипт завершился с ошибкой: {str(e)}")
         exit(1)
