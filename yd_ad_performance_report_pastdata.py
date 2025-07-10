@@ -147,41 +147,48 @@ def main():
             
             log_console(f"Получены данные за {date_str}: {raw_data}")
 
-            # Сохраняем сырые данные в таблицу rdl.yd_ad_performance_report
-            with conn.cursor() as cursor:
-                lines = raw_data.split('\n')
-                inserted_count = 0  # Счетчик вставленных записей
-                for line in lines[1:]:  # Пропускаем заголовок
-                    if line.strip():  # Если строка не пустая
-                        parts = line.split('\t')
-                        try:
-                            cursor.execute("""
-                                INSERT INTO rdl.yd_ad_performance_report (
-                                    date, campaign_id, campaign_name, ad_id, impressions,
-                                    clicks, cost, avg_click_position, device,
-                                    location_of_presence_id, match_type, slot
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (date, campaign_id, campaign_name, ad_id, impressions, clicks, cost, avg_click_position, device, location_of_presence_id, match_type, slot) 
-                                DO NOTHING
-                            """, (
-                                parts[0],  # Date
-                                int(parts[1]),  # CampaignId
-                                parts[2],  # CampaignName
-                                int(parts[3]),  # AdId
-                                int(parts[4]) if parts[4] else 0,  # Impressions
-                                int(parts[5]) if parts[5] else 0,  # Clicks
-                                float(parts[6].replace(',', '.')) / 1000000 if parts[6] and parts[6] != '--' else 0.0,  # Cost
-                                float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,  # AvgClickPosition
-                                parts[8],  # Device
-                                int(parts[9]) if parts[9] else None,  # LocationOfPresenceId
-                                parts[10],  # MatchType
-                                parts[11]  # Slot
-                            ))
-                            inserted_count += 1  # Увеличиваем счетчик при успешной вставке
-                        except Exception as e:
-                            logger.error(f"Ошибка при вставке данных: {line} Ошибка: {str(e)}")
-                conn.commit()
-                log_console(f"Вставлено {inserted_count} записей за {date_str}")
+with conn.cursor() as cursor:
+    lines = raw_data.split('\n')
+    inserted_count = 0  # Счетчик вставленных записей
+    for line in lines[1:]:  # Пропускаем заголовок
+        if line.strip():  # Если строка не пустая
+            parts = line.split('\t')
+            try:
+                cursor.execute("""
+                    INSERT INTO rdl.yd_ad_performance_report (
+                        date, campaign_id, campaign_name, ad_id, impressions,
+                        clicks, cost, avg_click_position, device,
+                        location_of_presence_id, match_type, slot
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (date, campaign_id, campaign_name, ad_id, impressions, clicks, cost, avg_click_position, device, location_of_presence_id, match_type, slot) 
+                    DO UPDATE SET
+                        impressions = EXCLUDED.impressions,
+                        clicks = EXCLUDED.clicks,
+                        cost = EXCLUDED.cost,
+                        avg_click_position = EXCLUDED.avg_click_position,
+                        device = EXCLUDED.device,
+                        location_of_presence_id = EXCLUDED.location_of_presence_id,
+                        match_type = EXCLUDED.match_type,
+                        slot = EXCLUDED.slot
+                """, (
+                    parts[0],  # Date
+                    int(parts[1]),  # CampaignId
+                    parts[2],  # CampaignName
+                    int(parts[3]),  # AdId
+                    int(parts[4]) if parts[4] else 0,  # Impressions
+                    int(parts[5]) if parts[5] else 0,  # Clicks
+                    float(parts[6].replace(',', '.')) / 1000000 if parts[6] and parts[6] != '--' else 0.0,  # Cost
+                    float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,  # AvgClickPosition
+                    parts[8],  # Device
+                    int(parts[9]) if parts[9] else None,  # LocationOfPresenceId
+                    parts[10],  # MatchType
+                    parts[11]  # Slot
+                ))
+                inserted_count += 1  # Увеличиваем счетчик при успешной вставке
+            except Exception as e:
+                logger.error(f"Ошибка при вставке данных: {line} Ошибка: {str(e)}")
+    conn.commit()
+    log_console(f"Вставлено {inserted_count} записей за {date_str}")
 
             current_date += timedelta(days=1)
             time.sleep(REQUEST_DELAY)
