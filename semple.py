@@ -23,7 +23,7 @@ def create_table(conn):
     """Создаём таблицу с автоинкрементным id"""
     with conn.cursor() as cursor:
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS yandex_direct_stats (
+        CREATE TABLE IF NOT EXISTS rdl.yandex_direct_stats (
             id SERIAL PRIMARY KEY,
             date DATE NOT NULL,
             campaign_id BIGINT NOT NULL,
@@ -138,7 +138,7 @@ def save_to_db(conn, raw_data):
 
                 # Полный SQL-запрос без многоточий
                 cursor.execute("""
-                INSERT INTO yandex_direct_stats (
+                INSERT INTO rdl.yandex_direct_stats (
                     date, campaign_id, campaign_name, ad_id,
                     impressions, clicks, cost, avg_click_position,
                     device, location_of_presence_id, match_type, slot
