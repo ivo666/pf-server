@@ -4,10 +4,8 @@ import time
 import uuid
 import configparser
 from datetime import datetime, timedelta
-from io import StringIO
 import psycopg2
 import os
-from psycopg2 import sql
 from psycopg2.extras import execute_batch
 
 # Настройка логирования
@@ -25,32 +23,38 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Константы
-TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"
 REQUEST_DELAY = 15  # Пауза между запросами в секундах
 MAX_RETRIES = 3
 RETRY_DELAY = 30  # Начальная задержка между повторными попытками в секундах
 WEEKLY_REPORT = True  # Флаг для формирования недельных отчетов
 
-def load_db_config():
-    """Загружает конфигурацию БД из config.ini"""
+def load_config():
+    """Загружает конфигурацию из config.ini"""
     config = configparser.ConfigParser()
     config.read('config.ini')
     
     if not config.has_section('Database'):
         raise ValueError("Section 'Database' not found in config.ini")
+    if not config.has_section('YandexDirect'):
+        raise ValueError("Section 'YandexDirect' not found in config.ini")
     
     return {
-        'host': config['Database'].get('HOST', 'localhost'),
-        'database': config['Database'].get('DATABASE', 'pfserver'),
-        'user': config['Database'].get('USER', 'postgres'),
-        'password': config['Database'].get('PASSWORD', ''),
-        'port': config['Database'].get('PORT', '5432')
+        'db': {
+            'host': config['Database'].get('HOST', 'localhost'),
+            'database': config['Database'].get('DATABASE', 'pfserver'),
+            'user': config['Database'].get('USER', 'postgres'),
+            'password': config['Database'].get('PASSWORD', ''),
+            'port': config['Database'].get('PORT', '5432')
+        },
+        'yandex': {
+            'token': config['YandexDirect'].get('ACCESS_TOKEN')
+        }
     }
 
 def create_table_if_not_exists(conn):
     """Создает целевую таблицу, если она не существует"""
     create_table_sql = """
-    CREATE TABLE IF NOT EXISTS rdl.ya_ad_performance_report (
+    CREATE TABLE IF NOT EXISTS rdl.yd_ad_performance_report (
         date DATE NOT NULL,
         campaign_id BIGINT NOT NULL,
         campaign_name TEXT,
@@ -63,11 +67,8 @@ def create_table_if_not_exists(conn):
         location_of_presence_id INTEGER,
         match_type TEXT,
         slot TEXT,
-        week_start_date DATE,
-        CONSTRAINT pk_ya_ad_performance PRIMARY KEY (date, campaign_id, ad_id)
-    );
-    
-    CREATE INDEX IF NOT EXISTS idx_ya_ad_performance_week ON rdl.ya_ad_performance_report (week_start_date);
+        CONSTRAINT pk_yd_ad_performance PRIMARY KEY (date, campaign_id, ad_id)
+    )
     """
     
     try:
@@ -81,46 +82,50 @@ def create_table_if_not_exists(conn):
         conn.rollback()
         raise
 
-def save_to_database(data, db_config):
-    """Сохраняет данные в PostgreSQL"""
+def check_existing_data(conn, date_range):
+    """Проверяет наличие данных за указанный период"""
+    check_sql = """
+    SELECT COUNT(*) 
+    FROM rdl.yd_ad_performance_report 
+    WHERE date BETWEEN %s AND %s
+    """
+    
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(check_sql, date_range)
+            count = cursor.fetchone()[0]
+            return count > 0
+    except Exception as e:
+        logger.error(f"Error checking existing data: {str(e)}")
+        raise
+
+def save_to_database(data, db_config, date_range):
+    """Сохраняет данные в PostgreSQL с проверкой на дубликаты"""
     try:
         conn = psycopg2.connect(**db_config)
         create_table_if_not_exists(conn)
         
+        # Проверяем наличие данных за этот период
+        if check_existing_data(conn, date_range):
+            logger.info(f"Data for period {date_range[0]} to {date_range[1]} already exists. Skipping.")
+            return False
+        
         insert_sql = """
-        INSERT INTO rdl.ya_ad_performance_report (
+        INSERT INTO rdl.yd_ad_performance_report (
             date, campaign_id, campaign_name, ad_id, clicks, impressions, cost, 
-            avg_click_position, device, location_of_presence_id, match_type, slot, week_start_date
+            avg_click_position, device, location_of_presence_id, match_type, slot
         ) VALUES (
             %(Date)s, %(CampaignId)s, %(CampaignName)s, %(AdId)s, %(Clicks)s, %(Impressions)s, %(Cost)s,
-            %(AvgClickPosition)s, %(Device)s, %(LocationOfPresenceId)s, %(MatchType)s, %(Slot)s, %(WeekStartDate)s
+            %(AvgClickPosition)s, %(Device)s, %(LocationOfPresenceId)s, %(MatchType)s, %(Slot)s
         )
-        ON CONFLICT (date, campaign_id, ad_id) 
-        DO UPDATE SET
-            campaign_name = EXCLUDED.campaign_name,
-            clicks = EXCLUDED.clicks,
-            impressions = EXCLUDED.impressions,
-            cost = EXCLUDED.cost,
-            avg_click_position = EXCLUDED.avg_click_position,
-            device = EXCLUDED.device,
-            location_of_presence_id = EXCLUDED.location_of_presence_id,
-            match_type = EXCLUDED.match_type,
-            slot = EXCLUDED.slot,
-            week_start_date = EXCLUDED.week_start_date
+        ON CONFLICT (date, campaign_id, ad_id) DO NOTHING
         """
-        
-        # Добавляем недельную дату для группировки
-        for record in data:
-            record_date = datetime.strptime(record['Date'], '%Y-%m-%d').date()
-            if WEEKLY_REPORT:
-                record['WeekStartDate'] = record_date - timedelta(days=record_date.weekday())
-            else:
-                record['WeekStartDate'] = record_date
         
         with conn.cursor() as cursor:
             execute_batch(cursor, insert_sql, data)
             conn.commit()
             logger.info(f"Successfully saved {len(data)} records to database")
+            return True
             
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
@@ -143,6 +148,10 @@ def parse_tsv_data(tsv_data):
             try:
                 parts = line.strip().split('\t')
                 if len(parts) >= 12:
+                    cost = float(parts[6]) / 1000000 if parts[6] else None
+                    if cost and cost > 100000:  # Проверка на аномально высокие значения
+                        logger.warning(f"High cost value detected: {cost} in record: {parts[:4]}...")
+                        
                     record = {
                         'Date': parts[0],
                         'CampaignId': int(parts[1]) if parts[1] else None,
@@ -150,7 +159,7 @@ def parse_tsv_data(tsv_data):
                         'AdId': int(parts[3]) if parts[3] else None,
                         'Clicks': int(parts[4]) if parts[4] else None,
                         'Impressions': int(parts[5]) if parts[5] else None,
-                        'Cost': float(parts[6]) if parts[6] else None,
+                        'Cost': cost,
                         'AvgClickPosition': float(parts[7]) if parts[7] else None,
                         'Device': parts[8],
                         'LocationOfPresenceId': int(parts[9]) if parts[9] else None,
@@ -280,9 +289,12 @@ def get_weekly_date_ranges(start_date, end_date):
 
 if __name__ == "__main__":
     try:
-        # Загружаем конфигурацию БД
-        db_config = load_db_config()
-        logger.info("Database configuration loaded")
+        # Загружаем конфигурацию
+        config = load_config()
+        db_config = config['db']
+        token = config['yandex']['token']
+        
+        logger.info("Configuration loaded successfully")
         
         # Устанавливаем даты (с 01.05.2025 по вчерашний день)
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -306,14 +318,14 @@ if __name__ == "__main__":
             time.sleep(REQUEST_DELAY)
             
             # Получаем данные
-            data = get_campaign_stats(TOKEN, range_start, range_end)
+            data = get_campaign_stats(token, range_start, range_end)
             
             if data:
                 parsed_data = parse_tsv_data(data)
                 if parsed_data:
                     # Сохраняем в БД
-                    save_to_database(parsed_data, db_config)
-                    logger.info(f"Successfully processed range {range_start} - {range_end}")
+                    db_date_range = (range_start, range_end)
+                    save_to_database(parsed_data, db_config, db_date_range)
                 else:
                     logger.error(f"Failed to parse data for range {range_start} - {range_end}")
             else:
