@@ -3,54 +3,75 @@ import configparser
 import time
 from datetime import datetime
 
-# Загрузка конфигурации
-config = configparser.ConfigParser()
-config.read('config.ini')
-token = config['YandexDirect']['ACCESS_TOKEN']
+# Настройки
+MAX_RETRIES = 3  # Максимальное количество попыток
+RETRY_DELAY = 30  # Задержка между попытками (секунды)
 
-# Уникальное имя отчета (используем timestamp)
-report_name = f"report_{int(time.time())}"
-
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Accept-Language": "ru",
-    "Content-Type": "application/json"
-}
-
-body = {
-    "params": {
-        "SelectionCriteria": {
-            "DateFrom": "2025-07-08",
-            "DateTo": "2025-07-08"
-        },
-        "FieldNames": ["Date", "CampaignId", "Clicks"],
-        "ReportName": report_name,  # Обязательное поле!
-        "ReportType": "AD_PERFORMANCE_REPORT",
-        "DateRangeType": "CUSTOM_DATE",
-        "Format": "TSV",
-        "IncludeVAT": "YES",
-        "IncludeDiscount": "NO"
+def get_report(token, date, attempt=1):
+    """Получение отчета с обработкой статуса 201"""
+    report_name = f"report_{int(time.time())}"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept-Language": "ru",
+        "Content-Type": "application/json"
     }
-}
 
-try:
-    print("🟢 Отправка запроса к API Яндекс.Директ...")
-    response = requests.post(
-        "https://api.direct.yandex.com/json/v5/reports",
-        headers=headers,
-        json=body,
-        timeout=30
-    )
+    body = {
+        "params": {
+            "SelectionCriteria": {"DateFrom": date, "DateTo": date},
+            "FieldNames": ["Date", "CampaignId", "Clicks", "Cost"],
+            "ReportName": report_name,
+            "ReportType": "AD_PERFORMANCE_REPORT",
+            "DateRangeType": "CUSTOM_DATE",
+            "Format": "TSV",
+            "IncludeVAT": "YES"
+        }
+    }
+
+    try:
+        print(f"📊 Попытка {attempt}: запрос данных за {date}")
+        response = requests.post(
+            "https://api.direct.yandex.com/json/v5/reports",
+            headers=headers,
+            json=body,
+            timeout=120
+        )
+
+        if response.status_code == 200:
+            print("✅ Отчет успешно получен")
+            return response.text
+        elif response.status_code == 201:
+            if attempt >= MAX_RETRIES:
+                print(f"❌ Превышено максимальное количество попыток ({MAX_RETRIES})")
+                return None
+            print(f"🔄 Отчет формируется, повтор через {RETRY_DELAY} сек...")
+            time.sleep(RETRY_DELAY)
+            return get_report(token, date, attempt+1)
+        else:
+            print(f"❌ Ошибка API (код {response.status_code}): {response.text}")
+            return None
+
+    except Exception as e:
+        print(f"💥 Ошибка соединения: {e}")
+        return None
+
+# Основной код
+if __name__ == "__main__":
+    # Загрузка конфигурации
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+    token = config['YandexDirect']['ACCESS_TOKEN']
     
-    print(f"🔵 Статус ответа: {response.status_code}")
+    # Дата запроса (можно изменить)
+    report_date = "2025-07-08"
     
-    if response.status_code == 200:
-        print("✅ Данные успешно получены:")
-        print(response.text[:500] + "...")  # Вывод первых 500 символов
-    elif response.status_code == 201:
-        print("🔄 Отчет формируется, попробуйте запросить позже")
+    print(f"🟢 Начало получения отчета за {report_date}")
+    report_data = get_report(token, report_date)
+    
+    if report_data:
+        print("🔵 Первые 100 символов отчета:")
+        print(report_data[:100])
+        # Здесь можно добавить сохранение в файл или обработку данных
     else:
-        print(f"❌ Ошибка API: {response.text}")
-        
-except Exception as e:
-    print(f"💥 Критическая ошибка: {e}")
+        print("🔴 Не удалось получить отчет")
