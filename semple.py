@@ -98,55 +98,57 @@ def save_to_db(conn, raw_data):
         return
 
     lines = raw_data.strip().split('\n')
-    if len(lines) < 2:
+    
+    # Проверяем, есть ли данные кроме заголовков
+    if len(lines) <= 1:
         print("❌ Нет данных для сохранения (только заголовки)")
         return
 
+    # Пропускаем строки, пока не найдем начало данных
+    data_start = 0
+    for i, line in enumerate(lines):
+        if line.startswith('Total rows') or not line.strip():
+            continue
+        if line.split('\t')[0].replace('-', '').isdigit():  # Проверяем, что первое поле - дата
+            data_start = i
+            break
+
     with conn.cursor() as cursor:
         total = 0
-        for line in lines[1:]:  # Пропускаем первую строку с заголовками
+        for line in lines[data_start:]:
             if not line.strip() or line.startswith("Total rows"):
                 continue
 
             parts = line.split('\t')
-            if len(parts) < 12:  # Проверяем количество полей
-                print(f"⚠️ Пропущена строка (недостаточно данных): {line[:50]}...")
+            if len(parts) < 12:
                 continue
 
             try:
-                # Преобразование данных с проверкой на пустые значения
+                # Проверяем, что первое поле - валидная дата
+                if not parts[0].replace('-', '').isdigit():
+                    continue
+
+                # Обработка данных
                 date_value = parts[0]
-                campaign_id = int(parts[1]) if parts[1] else 0
+                campaign_id = int(parts[1]) if parts[1] and parts[1].isdigit() else 0
                 campaign_name = parts[2] if parts[2] else None
-                ad_id = int(parts[3]) if parts[3] else 0
-                impressions = int(parts[4]) if parts[4] else 0
-                clicks = int(parts[5]) if parts[5] else 0
+                ad_id = int(parts[3]) if parts[3] and parts[3].isdigit() else 0
+                impressions = int(parts[4]) if parts[4] and parts[4].isdigit() else 0
+                clicks = int(parts[5]) if parts[5] and parts[5].isdigit() else 0
                 cost = float(parts[6].replace(',', '.'))/1000000 if parts[6] and parts[6] != '--' else 0.0
                 avg_pos = float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None
                 device = parts[8] if parts[8] else None
-                location_id = int(parts[9]) if parts[9] else None
+                location_id = int(parts[9]) if parts[9] and parts[9].isdigit() else None
                 match_type = parts[10] if parts[10] else None
                 slot = parts[11] if parts[11] else None
 
                 cursor.execute("""
-                INSERT INTO yandex_direct_stats (
-                    date, campaign_id, campaign_name, ad_id,
-                    impressions, clicks, cost, avg_click_position,
-                    device, location_of_presence_id, match_type, slot
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (date, campaign_id, ad_id, device) DO UPDATE SET
-                    impressions = EXCLUDED.impressions,
-                    clicks = EXCLUDED.clicks,
-                    cost = EXCLUDED.cost,
-                    avg_click_position = EXCLUDED.avg_click_position
-                """, (
-                    date_value, campaign_id, campaign_name, ad_id,
-                    impressions, clicks, cost, avg_pos,
-                    device, location_id, match_type, slot
-                ))
+                INSERT INTO yandex_direct_stats (...) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (...) DO UPDATE SET ...
+                """, (...))
                 total += 1
             except Exception as e:
-                print(f"⚠️ Ошибка обработки строки: {line[:50]}...\nОшибка: {str(e)}")
+                print(f"⚠️ Ошибка в строке: {line[:50]}...\nОшибка: {str(e)}")
         
         conn.commit()
         print(f"💾 Успешно сохранено строк: {total}")
