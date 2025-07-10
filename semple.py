@@ -97,14 +97,37 @@ def save_to_db(conn, raw_data):
         print("❌ Нет данных для сохранения")
         return
 
+    lines = raw_data.strip().split('\n')
+    if len(lines) < 2:
+        print("❌ Нет данных для сохранения (только заголовки)")
+        return
+
     with conn.cursor() as cursor:
         total = 0
-        for line in raw_data.strip().split('\n')[1:]:
-            if not line or "Total rows" in line:
+        for line in lines[1:]:  # Пропускаем первую строку с заголовками
+            if not line.strip() or line.startswith("Total rows"):
                 continue
 
             parts = line.split('\t')
+            if len(parts) < 12:  # Проверяем количество полей
+                print(f"⚠️ Пропущена строка (недостаточно данных): {line[:50]}...")
+                continue
+
             try:
+                # Преобразование данных с проверкой на пустые значения
+                date_value = parts[0]
+                campaign_id = int(parts[1]) if parts[1] else 0
+                campaign_name = parts[2] if parts[2] else None
+                ad_id = int(parts[3]) if parts[3] else 0
+                impressions = int(parts[4]) if parts[4] else 0
+                clicks = int(parts[5]) if parts[5] else 0
+                cost = float(parts[6].replace(',', '.'))/1000000 if parts[6] and parts[6] != '--' else 0.0
+                avg_pos = float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None
+                device = parts[8] if parts[8] else None
+                location_id = int(parts[9]) if parts[9] else None
+                match_type = parts[10] if parts[10] else None
+                slot = parts[11] if parts[11] else None
+
                 cursor.execute("""
                 INSERT INTO yandex_direct_stats (
                     date, campaign_id, campaign_name, ad_id,
@@ -114,27 +137,19 @@ def save_to_db(conn, raw_data):
                 ON CONFLICT (date, campaign_id, ad_id, device) DO UPDATE SET
                     impressions = EXCLUDED.impressions,
                     clicks = EXCLUDED.clicks,
-                    cost = EXCLUDED.cost
+                    cost = EXCLUDED.cost,
+                    avg_click_position = EXCLUDED.avg_click_position
                 """, (
-                    parts[0],
-                    int(parts[1]),
-                    parts[2],
-                    int(parts[3]),
-                    int(parts[4]) if parts[4] else 0,
-                    int(parts[5]) if parts[5] else 0,
-                    float(parts[6].replace(',', '.')) / 1000000 if parts[6] else 0,
-                    float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,
-                    parts[8],
-                    int(parts[9]) if parts[9] else None,
-                    parts[10],
-                    parts[11]
+                    date_value, campaign_id, campaign_name, ad_id,
+                    impressions, clicks, cost, avg_pos,
+                    device, location_id, match_type, slot
                 ))
                 total += 1
             except Exception as e:
-                print(f"⚠️ Ошибка строки {line[:50]}...: {e}")
+                print(f"⚠️ Ошибка обработки строки: {line[:50]}...\nОшибка: {str(e)}")
         
         conn.commit()
-        print(f"💾 Сохранено строк: {total}")
+        print(f"💾 Успешно сохранено строк: {total}")
 
 def main():
     try:
