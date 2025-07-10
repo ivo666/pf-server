@@ -2,7 +2,7 @@ import requests
 from datetime import datetime
 
 # Константы
-YANDEX_TOKEN = "ваш_токен"  # Замените на реальный токен
+YANDEX_TOKEN = "y0__xCfm56NBhi4uzgg2IHdxxMB-11ibEFeXtYCgMHlML7g5RHDNA"  # Замените на реальный токен
 DATE = "2025-07-01"
 
 def get_campaign_stats(token, date):
