@@ -5,7 +5,7 @@ import uuid
 import configparser
 import psycopg2
 import os
-from datetime import datetime, timedelta  # Импортируем datetime и timedelta
+from datetime import datetime, timedelta
 
 # Настройка логирования
 log_file = '/var/log/yandex_direct_loader.log'
@@ -69,7 +69,7 @@ def create_table_if_not_exists(conn):
                 location_of_presence_id INTEGER,
                 match_type TEXT,
                 slot TEXT,
-                PRIMARY KEY (date, campaign_id, ad_id)
+                PRIMARY KEY (date, campaign_id, campaign_name, ad_id, impressions, clicks, cost, avg_click_position, device, location_of_presence_id, match_type, slot)
             )
         """)
         conn.commit()
@@ -161,7 +161,8 @@ def main():
                                     clicks, cost, avg_click_position, device,
                                     location_of_presence_id, match_type, slot
                                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (date, campaign_id, ad_id) DO NOTHING
+                                ON CONFLICT (date, campaign_id, campaign_name, ad_id, impressions, clicks, cost, avg_click_position, device, location_of_presence_id, match_type, slot) 
+                                DO NOTHING
                             """, (
                                 parts[0],  # Date
                                 int(parts[1]),  # CampaignId
