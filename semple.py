@@ -17,7 +17,7 @@ DB_CONFIG = {
 }
 
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
-DATE = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+DATE = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
 
 def create_table(conn):
     """Создаём таблицу с автоинкрементным id и всеми полями"""
