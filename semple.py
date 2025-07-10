@@ -2,7 +2,7 @@ import requests
 import psycopg2
 import time
 import configparser
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Настройка логгирования
 print("🟢 Запуск скрипта")
@@ -25,9 +25,10 @@ except Exception as e:
     print(f"💥 Ошибка загрузки конфигурации: {e}")
     exit(1)
 
-# Используем вчерашнюю дату вместо будущей
-DATE = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+# Фиксированная дата по вашему запросу
+DATE = "2025-07-01"
 MAX_RETRIES = 3  # Максимальное количество попыток
+RETRY_DELAY = 30  # Задержка между попытками в секундах
 
 def get_campaign_stats(token, date, attempt=1):
     """Получение данных из API Яндекс.Директ с ограничением попыток"""
@@ -51,7 +52,8 @@ def get_campaign_stats(token, date, attempt=1):
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
-            "IncludeVAT": "YES"
+            "IncludeVAT": "YES",
+            "IncludeDiscount": "NO"
         }
     }
 
@@ -70,8 +72,8 @@ def get_campaign_stats(token, date, attempt=1):
             if attempt >= MAX_RETRIES:
                 print(f"❌ Превышено максимальное количество попыток ({MAX_RETRIES})")
                 return None
-            print(f"🔄 Отчет формируется, ожидайте... (попытка {attempt} из {MAX_RETRIES})")
-            time.sleep(30)
+            print(f"🔄 Отчет формируется, ожидайте {RETRY_DELAY} сек... (попытка {attempt} из {MAX_RETRIES})")
+            time.sleep(RETRY_DELAY)
             return get_campaign_stats(token, date, attempt+1)
         else:
             print(f"❌ Ошибка API: {response.status_code}\n{response.text}")
@@ -87,23 +89,40 @@ def save_to_db(conn, raw_data):
         print("❌ Нет данных для сохранения")
         return
 
-    lines = raw_data.strip().split('\n')
-    data_lines = [line for line in lines if line.strip() and line.split('\t')[0].startswith('20')]  # Фильтр дат
+    # Фильтрация данных
+    lines = [line for line in raw_data.strip().split('\n') 
+             if line.strip() and line.split('\t')[0].startswith('20')]
     
-    if not data_lines:
+    if not lines:
         print("❌ Нет данных после фильтрации")
         return
 
-    print(f"💾 Начало сохранения {len(data_lines)} строк...")
+    print(f"💾 Начало сохранения {len(lines)} строк...")
     
     with conn.cursor() as cursor:
         success = 0
-        for i, line in enumerate(data_lines, 1):
+        for i, line in enumerate(lines, 1):
             parts = line.split('\t')
             if len(parts) < 12:
+                print(f"⚠️ Пропущена строка (недостаточно данных): {line[:50]}...")
                 continue
 
             try:
+                # Подготовка данных
+                date_value = parts[0]
+                campaign_id = int(parts[1]) if parts[1] else 0
+                campaign_name = parts[2] if parts[2] else ''
+                ad_id = int(parts[3]) if parts[3] else 0
+                impressions = int(parts[4]) if parts[4] else 0
+                clicks = int(parts[5]) if parts[5] else 0
+                cost = float(parts[6].replace(',', '.'))/1000000 if parts[6] and parts[6] != '--' else 0.0
+                avg_pos = float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None
+                device = parts[8] if parts[8] else None
+                location_id = int(parts[9]) if parts[9] else 0
+                match_type = parts[10] if parts[10] else None
+                slot = parts[11] if parts[11] else None
+
+                # Вставка данных
                 cursor.execute("""
                 INSERT INTO rdl.yd_ad_performance_report (
                     date, campaign_id, campaign_name, ad_id, location_of_presence_id,
@@ -115,35 +134,30 @@ def save_to_db(conn, raw_data):
                     impressions = EXCLUDED.impressions,
                     clicks = EXCLUDED.clicks,
                     cost = EXCLUDED.cost,
-                    avg_click_position = EXCLUDED.avg_click_position
+                    avg_click_position = EXCLUDED.avg_click_position,
+                    device = EXCLUDED.device,
+                    match_type = EXCLUDED.match_type,
+                    slot = EXCLUDED.slot
                 """, (
-                    parts[0],  # date
-                    int(parts[1]) if parts[1] else 0,
-                    parts[2] if parts[2] else '',
-                    int(parts[3]) if parts[3] else 0,
-                    int(parts[9]) if parts[9] else 0,
-                    int(parts[4]) if parts[4] else 0,
-                    int(parts[5]) if parts[5] else 0,
-                    float(parts[6].replace(',', '.'))/1000000 if parts[6] and parts[6] != '--' else 0,
-                    float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None,
-                    parts[8],
-                    parts[10],
-                    parts[11]
+                    date_value, campaign_id, campaign_name, ad_id, location_id,
+                    impressions, clicks, cost, avg_pos,
+                    device, match_type, slot
                 ))
                 success += 1
+                
+                # Вывод прогресса каждые 50 строк
+                if i % 50 == 0:
+                    print(f"⏳ Обработано {i} строк...")
+                    
             except Exception as e:
                 print(f"⚠️ Ошибка в строке {i}: {e}")
+                continue
 
         conn.commit()
-        print(f"✅ Успешно сохранено {success} из {len(data_lines)} строк")
+        print(f"✅ Успешно сохранено {success} из {len(lines)} строк")
 
 def main():
     try:
-        # Проверка даты
-        if datetime.strptime(DATE, "%Y-%m-%d") > datetime.now():
-            print(f"⚠️ Внимание: запрашивается будущая дата {DATE}")
-            return
-
         # Подключение к БД
         print("🔌 Подключение к БД...")
         conn = psycopg2.connect(**DB_CONFIG)
