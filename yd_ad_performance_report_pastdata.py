@@ -144,10 +144,13 @@ def main():
                 log_console(f"Нет данных за {date_str}")
                 current_date += timedelta(days=1)
                 continue
+            
+            log_console(f"Получены данные за {date_str}: {raw_data}")
 
             # Сохраняем сырые данные в таблицу rdl.yd_ad_performance_report
             with conn.cursor() as cursor:
                 lines = raw_data.split('\n')
+                inserted_count = 0  # Счетчик вставленных записей
                 for line in lines[1:]:  # Пропускаем заголовок
                     if line.strip():  # Если строка не пустая
                         parts = line.split('\t')
@@ -172,9 +175,11 @@ def main():
                                 parts[10],  # MatchType
                                 parts[11]  # Slot
                             ))
+                            inserted_count += 1  # Увеличиваем счетчик при успешной вставке
                         except Exception as e:
                             logger.error(f"Ошибка при вставке данных: {line} Ошибка: {str(e)}")
                 conn.commit()
+                log_console(f"Вставлено {inserted_count} записей за {date_str}")
 
             current_date += timedelta(days=1)
             time.sleep(REQUEST_DELAY)
