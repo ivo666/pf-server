@@ -37,6 +37,9 @@ def get_campaign_stats(token, date):
         "Content-Type": "application/json"
     }
 
+    # Генерируем уникальное имя отчета
+    report_name = f"ad_report_{int(time.time())}"
+
     body = {
         "params": {
             "SelectionCriteria": {"DateFrom": date, "DateTo": date},
@@ -45,11 +48,12 @@ def get_campaign_stats(token, date):
                 "Impressions", "Clicks", "Cost", "AvgClickPosition",
                 "Device", "LocationOfPresenceId", "MatchType", "Slot"
             ],
-            "ReportName": f"report_{date.replace('-', '')}",
+            "ReportName": report_name,
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
-            "IncludeVAT": "YES"
+            "IncludeVAT": "YES",
+            "IncludeDiscount": "NO"
         }
     }
 
@@ -64,8 +68,12 @@ def get_campaign_stats(token, date):
         if response.status_code == 200:
             print("✅ Данные успешно получены")
             return response.text
+        elif response.status_code == 201:
+            print("🔄 Отчет формируется, ожидайте...")
+            time.sleep(30)
+            return get_campaign_stats(token, date)  # Повторяем запрос
         else:
-            print(f"❌ Ошибка API: {response.status_code} - {response.text}")
+            print(f"❌ Ошибка API: {response.status_code}\n{response.text}")
             return None
             
     except Exception as e:
