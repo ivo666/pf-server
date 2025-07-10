@@ -92,21 +92,21 @@ def get_campaign_stats(token, date):
         return None
 
 def save_to_db(conn, raw_data):
-    """Сохраняем данные в PostgreSQL"""
+    """Сохраняем данные в существующую таблицу rdl.yd_ad_performance_report"""
     if not raw_data:
         print("❌ Нет данных для сохранения")
         return
 
     lines = raw_data.strip().split('\n')
     
-    # Пропускаем заголовки и находим начало данных
+    # Пропускаем заголовки и строку с Total rows
     data_lines = []
     for line in lines:
-        if line.startswith('Date\tCampaignId'):  # Пропускаем строку заголовков
+        if line.startswith('Date\tCampaignId'):  # Заголовки
             continue
-        if line.startswith('Total rows'):  # Пропускаем строку с итогами
+        if line.startswith('Total rows'):  # Итоговая строка
             continue
-        if line.strip():  # Добавляем только непустые строки
+        if line.strip():  # Только непустые строки
             data_lines.append(line)
 
     if not data_lines:
@@ -122,36 +122,40 @@ def save_to_db(conn, raw_data):
                 continue
 
             try:
-                # Обработка данных с проверкой на пустые значения
+                # Обработка данных
                 date_value = parts[0]
                 campaign_id = int(parts[1]) if parts[1] else 0
-                campaign_name = parts[2] if parts[2] else None
+                campaign_name = parts[2] if parts[2] else ''
                 ad_id = int(parts[3]) if parts[3] else 0
                 impressions = int(parts[4]) if parts[4] else 0
                 clicks = int(parts[5]) if parts[5] else 0
                 cost = float(parts[6].replace(',', '.'))/1000000 if parts[6] and parts[6] != '--' else 0.0
                 avg_pos = float(parts[7].replace(',', '.')) if parts[7] and parts[7] != '--' else None
                 device = parts[8] if parts[8] else None
-                location_id = int(parts[9]) if parts[9] else None
+                location_id = int(parts[9]) if parts[9] else 0  # Обязательное поле для ключа
                 match_type = parts[10] if parts[10] else None
                 slot = parts[11] if parts[11] else None
 
-                # Полный SQL-запрос без многоточий
+                # Вставка с учетом 5 ключевых полей
                 cursor.execute("""
-                INSERT INTO rdl.yandex_direct_stats (
-                    date, campaign_id, campaign_name, ad_id,
+                INSERT INTO rdl.yd_ad_performance_report (
+                    date, campaign_id, campaign_name, ad_id, location_of_presence_id,
                     impressions, clicks, cost, avg_click_position,
-                    device, location_of_presence_id, match_type, slot
+                    device, match_type, slot
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (date, campaign_id, ad_id, device) DO UPDATE SET
+                ON CONFLICT (date, campaign_id, campaign_name, ad_id, location_of_presence_id) 
+                DO UPDATE SET
                     impressions = EXCLUDED.impressions,
                     clicks = EXCLUDED.clicks,
                     cost = EXCLUDED.cost,
-                    avg_click_position = EXCLUDED.avg_click_position
+                    avg_click_position = EXCLUDED.avg_click_position,
+                    device = EXCLUDED.device,
+                    match_type = EXCLUDED.match_type,
+                    slot = EXCLUDED.slot
                 """, (
-                    date_value, campaign_id, campaign_name, ad_id,
+                    date_value, campaign_id, campaign_name, ad_id, location_id,
                     impressions, clicks, cost, avg_pos,
-                    device, location_id, match_type, slot
+                    device, match_type, slot
                 ))
                 total += 1
             except Exception as e:
@@ -159,6 +163,21 @@ def save_to_db(conn, raw_data):
         
         conn.commit()
         print(f"💾 Успешно сохранено строк: {total}")
+
+def check_table_exists(conn):
+    """Проверяем существование таблицы"""
+    with conn.cursor() as cursor:
+        cursor.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_schema = 'rdl' 
+            AND table_name = 'yd_ad_performance_report'
+        )
+        """)
+        exists = cursor.fetchone()[0]
+        if not exists:
+            raise Exception("Таблица rdl.yd_ad_performance_report не найдена")
+    print("✅ Таблица rdl.yd_ad_performance_report доступна")
 
 def main():
     try:
