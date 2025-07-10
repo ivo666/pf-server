@@ -196,7 +196,7 @@ def check_token(token):
                 "SelectionCriteria": {"DateFrom": "2000-01-01", "DateTo": "2000-01-01"},
                 "FieldNames": ["Date"],
                 "ReportName": "token_check",
-                "ReportType": "AD_PERFORMANCE_REPORT",
+                "ReportType": "CUSTOM_REPORT",
                 "DateRangeType": "CUSTOM_DATE",
                 "Format": "TSV",
                 "IncludeVAT": "YES",
