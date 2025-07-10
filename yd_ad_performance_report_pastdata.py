@@ -12,26 +12,34 @@ from psycopg2.extras import execute_batch
 log_file = '/var/log/yandex_direct_loader.log'
 os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
+# Основной логгер для записи в файл (все уровни)
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler(log_file)]  # Только файловый обработчик
+    handlers=[logging.FileHandler(log_file)],
+    force=True
 )
 
-# Дополнительный обработчик для вывода логов в терминал (только INFO и выше)
+# Создаем отдельный логгер для вывода в консоль (только важные сообщения)
+console_logger = logging.getLogger('console')
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(message)s')
 console_handler.setFormatter(formatter)
+console_logger.addHandler(console_handler)
+console_logger.propagate = False  # Предотвращаем дублирование в файл
 
 logger = logging.getLogger(__name__)
-logger.addHandler(console_handler)  # Добавляем обработчик для терминала
 
 # Константы
 REQUEST_DELAY = 15
 MAX_RETRIES = 3
 RETRY_DELAY = 30
 WEEKLY_REPORT = True
+
+def log_console(message):
+    """Выводит сообщение только в консоль (без технических деталей)"""
+    console_logger.info(message)
 
 def load_config():
     """Загружает конфигурацию из config.ini"""
@@ -81,9 +89,10 @@ def create_table_if_not_exists(conn):
             cursor.execute("CREATE SCHEMA IF NOT EXISTS rdl;")
             cursor.execute(create_table_sql)
             conn.commit()
-            logger.info("Table checked/created successfully")
+            log_console("Таблица проверена/создана")
     except Exception as e:
         logger.error(f"Error creating table: {str(e)}")
+        log_console("Ошибка при создании таблицы")
         conn.rollback()
         raise
 
@@ -110,7 +119,7 @@ def save_to_database(data, db_config, date_range):
         create_table_if_not_exists(conn)
         
         if check_existing_data(conn, date_range):
-            logger.info(f"Data for {date_range[0]} to {date_range[1]} already exists")
+            log_console(f"Данные за период {date_range[0]} - {date_range[1]} уже существуют")
             return False
         
         insert_sql = """
@@ -127,11 +136,12 @@ def save_to_database(data, db_config, date_range):
         with conn.cursor() as cursor:
             execute_batch(cursor, insert_sql, data)
             conn.commit()
-            logger.info(f"Saved {len(data)} records for {date_range[0]} to {date_range[1]}")
+            log_console(f"Сохранено {len(data)} записей за {date_range[0]} - {date_range[1]}")
             return True
             
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
+        log_console("Ошибка при сохранении в базу данных")
         raise
     finally:
         if conn:
@@ -144,14 +154,16 @@ def parse_tsv_data(tsv_data):
         return None
         
     data = []
+    error_count = 0
+    
     for line in [line for line in tsv_data.split('\n') if line.strip() and not line.startswith('Date\t')]:
         try:
             parts = line.strip().split('\t')
             if len(parts) >= 12:
-                cost = float(parts[6]) / 1000000 if parts[6] else None
-                if cost and cost > 100000:
-                    logger.warning(f"High cost value detected: {cost}")
-                    
+                # Обработка специальных значений
+                avg_pos = None if parts[7] in ('--', '') else float(parts[7])
+                cost = None if parts[6] in ('--', '') else float(parts[6]) / 1000000
+                
                 data.append({
                     'Date': parts[0],
                     'CampaignId': int(parts[1]) if parts[1] else None,
@@ -160,14 +172,18 @@ def parse_tsv_data(tsv_data):
                     'Clicks': int(parts[4]) if parts[4] else None,
                     'Impressions': int(parts[5]) if parts[5] else None,
                     'Cost': cost,
-                    'AvgClickPosition': float(parts[7]) if parts[7] else None,
+                    'AvgClickPosition': avg_pos,
                     'Device': parts[8],
                     'LocationOfPresenceId': int(parts[9]) if parts[9] else None,
                     'MatchType': parts[10],
                     'Slot': parts[11]
                 })
         except Exception as e:
-            logger.error(f"Error parsing line: {line}. Error: {str(e)}")
+            error_count += 1
+            logger.debug(f"Error parsing line (skipped): {line[:100]}... Error: {str(e)}")
+    
+    if error_count > 0:
+        logger.warning(f"Skipped {error_count} rows due to parsing errors")
     
     return data if data else None
 
@@ -196,6 +212,7 @@ def get_campaign_stats(token, date_from, date_to):
 
     for attempt in range(MAX_RETRIES):
         try:
+            log_console(f"Запрос данных за {date_from} - {date_to} (попытка {attempt + 1})")
             response = requests.post(
                 "https://api.direct.yandex.com/json/v5/reports",
                 headers=headers,
@@ -207,18 +224,19 @@ def get_campaign_stats(token, date_from, date_to):
                 return response.text
             elif response.status_code == 201:
                 wait_time = RETRY_DELAY * (attempt + 1)
-                logger.info(f"Report is being generated, waiting {wait_time} seconds...")
+                log_console(f"Отчет формируется, ожидание {wait_time} секунд...")
                 time.sleep(wait_time)
                 continue
             
             logger.error(f"API error: {response.status_code} - {response.text}")
+            log_console("Ошибка API Яндекс.Директ")
             return None
             
         except Exception as e:
             logger.error(f"Request failed (attempt {attempt + 1}): {str(e)}")
             time.sleep(RETRY_DELAY * (attempt + 1))
     
-    logger.error(f"Max retries ({MAX_RETRIES}) reached")
+    log_console("Превышено максимальное количество попыток")
     return None
 
 def get_date_ranges(start_date, end_date):
@@ -240,13 +258,13 @@ def get_date_ranges(start_date, end_date):
 if __name__ == "__main__":
     try:
         config = load_config()
-        logger.info("Configuration loaded")
+        log_console("Конфигурация загружена")
         
         end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         date_ranges = get_date_ranges("2025-05-01", end_date)
         
         for range_start, range_end in date_ranges:
-            logger.info(f"Processing {range_start} to {range_end}")
+            log_console(f"Обработка периода {range_start} - {range_end}")
             time.sleep(REQUEST_DELAY)
             
             data = get_campaign_stats(config['yandex']['token'], range_start, range_end)
@@ -257,7 +275,8 @@ if __name__ == "__main__":
             if parsed:
                 save_to_database(parsed, config['db'], (range_start, range_end))
         
-        logger.info("Script completed successfully")
+        log_console("Скрипт успешно завершен")
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
+        log_console("Критическая ошибка выполнения скрипта")
