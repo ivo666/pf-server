@@ -3,7 +3,6 @@ import time
 import psycopg2
 import configparser
 from datetime import datetime, timedelta
-import random
 
 # Чтение конфигурации
 config = configparser.ConfigParser()
@@ -20,69 +19,100 @@ DB_PARAMS = {
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
 # Параметры запросов
-MAX_ATTEMPTS = 5
-INITIAL_DELAY = 10
-MAX_DELAY = 300
-REQUEST_DELAY = 5
+MAX_WAIT_MINUTES = 30  # Максимальное время ожидания отчета
+CHECK_DELAY = 30       # Проверка статуса каждые 30 секунд
+REQUEST_DELAY = 5      # Пауза между днями
 
-def get_campaign_stats(token, date_from, date_to):
+def get_campaign_stats(token, date):
+    """Запрашивает отчет и дожидается его готовности"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
         "Content-Type": "application/json"
     }
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        report_name = f"API_Report_{date_from}_{attempt}_{random.randint(1000, 9999)}"
-        
-        body = {
-            "params": {
-                "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
-                "FieldNames": [
-                    "Date", "CampaignId", "CampaignName", "AdId",
-                    "Impressions", "Clicks", "Cost", "AvgClickPosition",
-                    "Device", "LocationOfPresenceId", "MatchType", "Slot"
-                ],
-                "ReportName": report_name,
-                "ReportType": "AD_PERFORMANCE_REPORT",
-                "DateRangeType": "CUSTOM_DATE",
-                "Format": "TSV",
-                "IncludeVAT": "YES",
-                "IncludeDiscount": "NO"
-            }
+    body = {
+        "params": {
+            "SelectionCriteria": {"DateFrom": date, "DateTo": date},
+            "FieldNames": [
+                "Date", "CampaignId", "CampaignName", "AdId",
+                "Impressions", "Clicks", "Cost", "AvgClickPosition",
+                "Device", "LocationOfPresenceId", "MatchType", "Slot"
+            ],
+            "ReportName": f"API_Report_{date}",
+            "ReportType": "AD_PERFORMANCE_REPORT",
+            "DateRangeType": "CUSTOM_DATE",
+            "Format": "TSV",
+            "IncludeVAT": "YES",
+            "IncludeDiscount": "NO"
         }
+    }
 
+    # 1. Отправляем запрос на создание отчета
+    try:
+        response = requests.post(
+            "https://api.direct.yandex.com/json/v5/reports",
+            headers=headers,
+            json=body,
+            timeout=60
+        )
+    except Exception as e:
+        print(f"{date}: ошибка запроса - {str(e)}")
+        return None
+
+    # 2. Обрабатываем ответ
+    if response.status_code == 200:
+        return response.text
+    elif response.status_code == 201:
+        print(f"{date}: отчет в очереди, ожидаем...")
+        return wait_for_report(headers, date)
+    else:
+        print(f"{date}: ошибка API (код {response.status_code})")
+        return None
+
+def wait_for_report(headers, date):
+    """Ожидает готовности отчета"""
+    start_time = time.time()
+    attempt = 0
+    
+    while time.time() - start_time < MAX_WAIT_MINUTES * 60:
+        attempt += 1
+        time.sleep(CHECK_DELAY)
+        
         try:
-            delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
-            
+            # Повторяем исходный запрос для проверки статуса
             response = requests.post(
                 "https://api.direct.yandex.com/json/v5/reports",
                 headers=headers,
-                json=body,
-                timeout=60
+                json={
+                    "params": {
+                        "SelectionCriteria": {"DateFrom": date, "DateTo": date},
+                        "ReportName": f"API_Report_{date}",
+                        "ReportType": "AD_PERFORMANCE_REPORT"
+                    }
+                },
+                timeout=30
             )
 
             if response.status_code == 200:
-                print(f"{date_from}: успешно получены данные (попытка {attempt})")
+                print(f"{date}: отчет готов")
                 return response.text
             elif response.status_code == 201:
-                print(f"{date_from}: отчет формируется (попытка {attempt}), ждем {delay} сек...")
-                time.sleep(delay)
+                print(f"{date}: все еще формируется (попытка {attempt})")
                 continue
             else:
-                print(f"{date_from}: ошибка {response.status_code} (попытка {attempt}): {response.text}")
-                time.sleep(delay)
-                continue
-
+                print(f"{date}: ошибка проверки статуса (код {response.status_code})")
+                return None
+                
         except Exception as e:
-            print(f"{date_from}: ошибка соединения (попытка {attempt}): {str(e)}")
-            time.sleep(delay)
+            print(f"{date}: ошибка при проверке статуса - {str(e)}")
             continue
-
-    print(f"{date_from}: не удалось получить данные после {MAX_ATTEMPTS} попыток")
+    
+    print(f"{date}: превышено время ожидания ({MAX_WAIT_MINUTES} минут)")
     return None
 
 def create_table(conn):
+    """Создает таблицу в PostgreSQL"""
     with conn.cursor() as cursor:
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS rdl.ad_performance_report (
@@ -97,18 +127,18 @@ def create_table(conn):
             device TEXT,
             location_of_presence_id INTEGER,
             match_type TEXT,
-            slot TEXT,
-            UNIQUE(date, campaign_id, ad_id, device, location_of_presence_id)
+            slot TEXT
         )
         """)
     conn.commit()
 
-def process_and_load_data(conn, tsv_data, date_str):
+def process_and_load_data(conn, tsv_data, date):
+    """Обрабатывает и загружает данные"""
     if not tsv_data:
-        print(f"{date_str}: нет данных для загрузки")
+        print(f"{date}: нет данных для загрузки")
         return 0
     
-    lines = tsv_data.strip().split('\n')[2:]
+    lines = tsv_data.strip().split('\n')[2:]  # Пропускаем заголовки
     
     data_to_insert = []
     for line in lines:
@@ -135,35 +165,31 @@ def process_and_load_data(conn, tsv_data, date_str):
                 row[11]
             ))
         except ValueError as e:
-            print(f"{date_str}: ошибка в строке данных - {str(e)}")
+            print(f"{date}: ошибка в строке данных - {str(e)}")
             continue
     
     if not data_to_insert:
-        print(f"{date_str}: нет валидных данных")
+        print(f"{date}: нет валидных данных")
         return 0
     
-    loaded_count = 0
-    for data in data_to_insert:
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                INSERT INTO rdl.ad_performance_report (
-                    date, campaign_id, campaign_name, ad_id, impressions, 
-                    clicks, cost, avg_click_position, device, 
-                    location_of_presence_id, match_type, slot
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (date, campaign_id, ad_id, device, location_of_presence_id) DO NOTHING
-                """, data)
-                if cursor.rowcount > 0:
-                    loaded_count += 1
-            conn.commit()
-        except Exception as e:
-            print(f"{date_str}: ошибка при загрузке строки - {str(e)}")
-            conn.rollback()
-            continue
-    
-    print(f"{date_str}: загружено {loaded_count} строк (из {len(data_to_insert)})")
-    return loaded_count
+    try:
+        with conn.cursor() as cursor:
+            cursor.executemany("""
+            INSERT INTO rdl.ad_performance_report (
+                date, campaign_id, campaign_name, ad_id, impressions, 
+                clicks, cost, avg_click_position, device, 
+                location_of_presence_id, match_type, slot
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, data_to_insert)
+        conn.commit()
+        
+        print(f"{date}: успешно загружено {len(data_to_insert)} строк")
+        return len(data_to_insert)
+        
+    except Exception as e:
+        print(f"{date}: ошибка при загрузке в БД - {str(e)}")
+        conn.rollback()
+        return 0
 
 def main():
     start_date = datetime(2025, 7, 1).date()
@@ -181,12 +207,12 @@ def main():
             date_str = current_date.strftime('%Y-%m-%d')
             print(f"\n--- Обработка {date_str} ---")
             
-            data = get_campaign_stats(YANDEX_TOKEN, date_str, date_str)
+            data = get_campaign_stats(YANDEX_TOKEN, date_str)
             
             if data:
                 process_and_load_data(conn, data, date_str)
             else:
-                print(f"{date_str}: данные не получены")
+                print(f"{date_str}: пропуск из-за ошибки")
             
             current_date += timedelta(days=1)
             if current_date <= end_date:
