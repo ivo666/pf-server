@@ -84,7 +84,7 @@ def get_campaign_stats(token, date):
 def create_table(conn):
     """Создает таблицу в PostgreSQL"""
     create_table_query = """
-    CREATE TABLE IF NOT EXISTS rdl.campaign_data (
+    CREATE TABLE IF NOT EXISTS campaign_data (
         date DATE,
         campaign_id BIGINT,
         campaign_name TEXT,
@@ -145,7 +145,7 @@ def process_and_load_data(conn, tsv_data):
             continue
     
     insert_query = """
-    INSERT INTO rdl.campaign_data (
+    INSERT INTO campaign_data (
         date, campaign_id, campaign_name, ad_id, impressions, 
         clicks, cost, avg_click_position, device, 
         location_of_presence_id, match_type, slot
