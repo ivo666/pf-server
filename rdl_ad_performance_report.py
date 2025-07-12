@@ -21,7 +21,7 @@ DB_PARAMS = {
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
 # Настройки запросов
-DATE = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")  # Данные за позавчера
+DATE = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")  # Данные за позавчера
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # Секунды между попытками
 
