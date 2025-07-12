@@ -1,6 +1,5 @@
 import requests
 import time
-import csv
 import psycopg2
 from datetime import datetime, timedelta
 
@@ -82,9 +81,9 @@ def get_campaign_stats(token, date):
     return None
 
 def create_table(conn):
-    """Создает таблицу в PostgreSQL"""
+    """Создает таблицу в схеме rdl в PostgreSQL"""
     create_table_query = """
-    CREATE TABLE IF NOT EXISTS campaign_data (
+    CREATE TABLE IF NOT EXISTS rdl.campaign_data (
         date DATE,
         campaign_id BIGINT,
         campaign_name TEXT,
@@ -116,7 +115,12 @@ def process_and_load_data(conn, tsv_data):
     
     data_to_insert = []
     for line in lines:
-        if not line or line.startswith('Total rows:'):
+        # Пропускаем строку с Total rows
+        if line.startswith('Total rows:'):
+            continue
+            
+        # Пропускаем пустые строки
+        if not line.strip():
             continue
             
         row = line.split('\t')
@@ -144,8 +148,12 @@ def process_and_load_data(conn, tsv_data):
             print(f"Ошибка преобразования данных в строке: {row}. Ошибка: {e}")
             continue
     
+    if not data_to_insert:
+        print("Нет данных для вставки")
+        return
+    
     insert_query = """
-    INSERT INTO campaign_data (
+    INSERT INTO rdl.campaign_data (
         date, campaign_id, campaign_name, ad_id, impressions, 
         clicks, cost, avg_click_position, device, 
         location_of_presence_id, match_type, slot
@@ -174,7 +182,7 @@ def main():
     try:
         conn = psycopg2.connect(**DB_PARAMS)
         
-        # Создаем таблицу (если не существует)
+        # Создаем таблицу в схеме rdl (если не существует)
         create_table(conn)
         
         # Обрабатываем и загружаем данные
