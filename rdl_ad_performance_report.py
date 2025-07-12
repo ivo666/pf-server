@@ -3,7 +3,6 @@ import time
 import psycopg2
 import configparser
 from datetime import datetime, timedelta
-from pathlib import Path
 
 # Чтение конфигурации из файла
 config = configparser.ConfigParser()
@@ -22,11 +21,11 @@ DB_PARAMS = {
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
 # Настройки запросов
-MAX_RETRIES = 5
-RETRY_DELAY = 10  # Секунды между попытками
-REQUEST_DELAY = 2  # Секунды между запросами разных дней
+DATE = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")  # Данные за позавчера
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # Секунды между попытками
 
-def get_campaign_stats(token, date_from, date_to):
+def get_campaign_stats(token, date):
     """Получает статистику из Яндекс.Директ"""
     headers = {
         "Authorization": f"Bearer {token}",
@@ -37,8 +36,8 @@ def get_campaign_stats(token, date_from, date_to):
     body = {
         "params": {
             "SelectionCriteria": {
-                "DateFrom": date_from,
-                "DateTo": date_to
+                "DateFrom": date,
+                "DateTo": date
             },
             "FieldNames": [
                 "Date",
@@ -54,7 +53,7 @@ def get_campaign_stats(token, date_from, date_to):
                 "MatchType",
                 "Slot"
             ],
-            "ReportName": "API_Report_Extended",
+            "ReportName": "API_Report_Extended123",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -75,27 +74,23 @@ def get_campaign_stats(token, date_from, date_to):
             if response.status_code == 200:
                 return response.text
             elif response.status_code == 201:
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY)
-                    continue
-                else:
-                    return None
-            else:
-                return None
-
-        except Exception:
-            if attempt < MAX_RETRIES - 1:
+                print(f"Отчет формируется... (попытка {attempt + 1})")
                 time.sleep(RETRY_DELAY)
-                continue
             else:
+                print(f"Ошибка {response.status_code}: {response.text}")
                 return None
 
+        except Exception as e:
+            print(f"Ошибка соединения: {str(e)}")
+            return None
+
+    print("Достигнуто максимальное число попыток.")
     return None
 
 def create_table(conn):
     """Создает таблицу в схеме rdl в PostgreSQL"""
     create_table_query = """
-    CREATE TABLE IF NOT EXISTS rdl.yd_ad_performance_report (
+    CREATE TABLE IF NOT EXISTS rdl.ad_performance_report (
         date DATE,
         campaign_id BIGINT,
         campaign_name TEXT,
@@ -114,17 +109,25 @@ def create_table(conn):
         cursor.execute(create_table_query)
     conn.commit()
 
-def process_and_load_data(conn, tsv_data, date):
+def process_and_load_data(conn, tsv_data):
     """Обрабатывает TSV данные и загружает в PostgreSQL"""
-    if not tsv_data:
-        return 0
-    
+    # Удаляем возможные пустые строки в конце
     tsv_data = tsv_data.strip()
-    lines = tsv_data.split('\n')[2:]  # Пропускаем первые две строки
+    
+    # Разделяем строки
+    lines = tsv_data.split('\n')
+    
+    # Пропускаем первые две строки (заголовок и пустую строку)
+    lines = lines[2:]
     
     data_to_insert = []
     for line in lines:
-        if not line or line.startswith('Total rows:'):
+        # Пропускаем строку с Total rows
+        if line.startswith('Total rows:'):
+            continue
+            
+        # Пропускаем пустые строки
+        if not line.strip():
             continue
             
         row = line.split('\t')
@@ -148,14 +151,16 @@ def process_and_load_data(conn, tsv_data, date):
                 row[10],
                 row[11]
             ))
-        except ValueError:
+        except ValueError as e:
+            print(f"Ошибка преобразования данных в строке: {row}. Ошибка: {e}")
             continue
     
     if not data_to_insert:
-        return 0
+        print("Нет данных для вставки")
+        return
     
     insert_query = """
-    INSERT INTO rdl.yd_ad_performance_report (
+    INSERT INTO rdl.ad_performance_report (
         date, campaign_id, campaign_name, ad_id, impressions, 
         clicks, cost, avg_click_position, device, 
         location_of_presence_id, match_type, slot
@@ -165,36 +170,33 @@ def process_and_load_data(conn, tsv_data, date):
     with conn.cursor() as cursor:
         cursor.executemany(insert_query, data_to_insert)
     conn.commit()
-    return len(data_to_insert)
+    print(f"Успешно импортировано {len(data_to_insert)} строк")
 
 def main():
-    # Определяем диапазон дат
-    start_date = datetime(2025, 5, 1).date()
-    end_date = (datetime.now() - timedelta(days=1)).date()
+    print(f"Запрос данных из Яндекс.Директ за {DATE}")
+    
+    # Получаем данные из API
+    data = get_campaign_stats(YANDEX_TOKEN, DATE)
+    
+    if not data:
+        print("Не удалось получить данные из Яндекс.Директ")
+        return
+    
+    print("Успешно получены данные (первые 100 символов):")
+    print(data[:100] + "...")
     
     # Подключаемся к PostgreSQL
-    conn = None
     try:
         conn = psycopg2.connect(**DB_PARAMS)
+        
+        # Создаем таблицу в схеме rdl (если не существует)
         create_table(conn)
         
-        current_date = start_date
-        while current_date <= end_date:
-            date_str = current_date.strftime("%Y-%m-%d")
-            data = get_campaign_stats(YANDEX_TOKEN, date_str, date_str)
-            
-            if data:
-                count = process_and_load_data(conn, data, current_date)
-                print(f"{date_str}: загружено {count} строк")
-            else:
-                print(f"{date_str}: данные не получены")
-            
-            current_date += timedelta(days=1)
-            if current_date <= end_date:
-                time.sleep(REQUEST_DELAY)
-                
-    except Exception:
-        pass
+        # Обрабатываем и загружаем данные
+        process_and_load_data(conn, data)
+        
+    except Exception as e:
+        print(f"Ошибка при работе с PostgreSQL: {e}")
     finally:
         if conn:
             conn.close()
