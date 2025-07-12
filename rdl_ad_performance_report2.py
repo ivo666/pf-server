@@ -20,93 +20,69 @@ DB_PARAMS = {
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
 # Параметры запросов
-MAX_WAIT_MINUTES = 30  # Максимальное время ожидания отчета
-CHECK_DELAY = 30       # Задержка между проверками статуса
-REQUEST_DELAY = 3      # Задержка между днями
+MAX_ATTEMPTS = 5  # Максимальное количество попыток
+INITIAL_DELAY = 10  # Начальная задержка между попытками (сек)
+MAX_DELAY = 300    # Максимальная задержка (5 минут)
+REQUEST_DELAY = 5  # Задержка между днями (сек)
 
 def get_campaign_stats(token, date_from, date_to):
-    """Получает статистику с проверкой статуса через API"""
+    """Получает статистику с экспоненциальной задержкой"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
         "Content-Type": "application/json"
     }
 
-    # Уникальное имя отчета
-    report_name = f"API_Report_{date_from}_{random.randint(1000, 9999)}"
-    
-    body = {
-        "params": {
-            "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
-            "FieldNames": [
-                "Date", "CampaignId", "CampaignName", "AdId",
-                "Impressions", "Clicks", "Cost", "AvgClickPosition",
-                "Device", "LocationOfPresenceId", "MatchType", "Slot"
-            ],
-            "ReportName": report_name,
-            "ReportType": "AD_PERFORMANCE_REPORT",
-            "DateRangeType": "CUSTOM_DATE",
-            "Format": "TSV",
-            "IncludeVAT": "YES",
-            "IncludeDiscount": "NO"
-        }
-    }
-
-    try:
-        # 1. Отправляем запрос на создание отчета
-        response = requests.post(
-            "https://api.direct.yandex.com/json/v5/reports",
-            headers=headers,
-            json=body,
-            timeout=60
-        )
-
-        if response.status_code == 200:
-            print(f"{date_from}: отчет готов сразу")
-            return response.text
-        elif response.status_code == 201:
-            print(f"{date_from}: отчет в очереди")
-            return wait_for_report(token, response.headers, date_from)
-        else:
-            print(f"{date_from}: ошибка запроса (код {response.status_code})")
-            return None
-
-    except Exception as e:
-        print(f"{date_from}: ошибка соединения: {str(e)}")
-        return None
-
-def wait_for_report(token, headers, date_str):
-    """Ожидает готовности отчета через API"""
-    start_time = time.time()
-    retry_count = 0
-    
-    while time.time() - start_time < MAX_WAIT_MINUTES * 60:
-        retry_count += 1
-        print(f"{date_str}: проверка статуса (попытка {retry_count})")
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        # Уникальное имя отчета для каждой попытки
+        report_name = f"API_Report_{date_from}_{attempt}_{random.randint(1000, 9999)}"
         
+        body = {
+            "params": {
+                "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
+                "FieldNames": [
+                    "Date", "CampaignId", "CampaignName", "AdId",
+                    "Impressions", "Clicks", "Cost", "AvgClickPosition",
+                    "Device", "LocationOfPresenceId", "MatchType", "Slot"
+                ],
+                "ReportName": report_name,
+                "ReportType": "AD_PERFORMANCE_REPORT",
+                "DateRangeType": "CUSTOM_DATE",
+                "Format": "TSV",
+                "IncludeVAT": "YES",
+                "IncludeDiscount": "NO"
+            }
+        }
+
         try:
-            # 2. Проверяем статус отчета
-            status_response = requests.get(
+            # Рассчитываем экспоненциальную задержку
+            delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
+            
+            response = requests.post(
                 "https://api.direct.yandex.com/json/v5/reports",
                 headers=headers,
-                timeout=30
+                json=body,
+                timeout=60
             )
 
-            if status_response.status_code == 200:
-                print(f"{date_str}: отчет готов")
-                return status_response.text
-            elif status_response.status_code == 201:
-                print(f"{date_str}: отчет еще формируется")
-                time.sleep(CHECK_DELAY)
+            if response.status_code == 200:
+                print(f"{date_from}: успешно получены данные (попытка {attempt})")
+                return response.text
+            elif response.status_code == 201:
+                print(f"{date_from}: отчет формируется (попытка {attempt}), ждем {delay} сек...")
+                time.sleep(delay)
+                continue
             else:
-                print(f"{date_str}: ошибка проверки статуса (код {status_response.status_code})")
-                return None
-                
+                print(f"{date_from}: ошибка {response.status_code} (попытка {attempt}): {response.text}")
+                time.sleep(delay)
+                continue
+
         except Exception as e:
-            print(f"{date_str}: ошибка при проверке статуса: {str(e)}")
-            time.sleep(CHECK_DELAY)
-    
-    print(f"{date_str}: превышено время ожидания ({MAX_WAIT_MINUTES} минут)")
+            print(f"{date_from}: ошибка соединения (попытка {attempt}): {str(e)}")
+            time.sleep(delay)
+            continue
+
+    print(f"{date_from}: не удалось получить данные после {MAX_ATTEMPTS} попыток")
     return None
 
 def create_table(conn):
@@ -125,13 +101,14 @@ def create_table(conn):
             device TEXT,
             location_of_presence_id INTEGER,
             match_type TEXT,
-            slot TEXT
+            slot TEXT,
+            UNIQUE(date, campaign_id, ad_id, device, location_of_presence_id)  # Добавляем ограничение уникальности
         )
         """)
     conn.commit()
 
 def process_and_load_data(conn, tsv_data, date_str):
-    """Обрабатывает и загружает данные"""
+    """Обрабатывает и загружает данные с обработкой дубликатов"""
     if not tsv_data:
         print(f"{date_str}: нет данных для загрузки")
         return 0
@@ -170,24 +147,29 @@ def process_and_load_data(conn, tsv_data, date_str):
         print(f"{date_str}: нет валидных данных")
         return 0
     
-    try:
-        with conn.cursor() as cursor:
-            cursor.executemany("""
-            INSERT INTO rdl.ad_performance_report (
-                date, campaign_id, campaign_name, ad_id, impressions, 
-                clicks, cost, avg_click_position, device, 
-                location_of_presence_id, match_type, slot
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, data_to_insert)
-        conn.commit()
-        
-        print(f"{date_str}: загружено {len(data_to_insert)} строк")
-        return len(data_to_insert)
-        
-    except Exception as e:
-        print(f"{date_str}: ошибка загрузки в БД - {str(e)}")
-        conn.rollback()
-        return 0
+    loaded_count = 0
+    for data in data_to_insert:
+        try:
+            with conn.cursor() as cursor:
+                # Используем ON CONFLICT DO NOTHING для пропуска дубликатов
+                cursor.execute("""
+                INSERT INTO rdl.ad_performance_report (
+                    date, campaign_id, campaign_name, ad_id, impressions, 
+                    clicks, cost, avg_click_position, device, 
+                    location_of_presence_id, match_type, slot
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (date, campaign_id, ad_id, device, location_of_presence_id) DO NOTHING
+                """, data)
+                if cursor.rowcount > 0:
+                    loaded_count += 1
+            conn.commit()
+        except Exception as e:
+            print(f"{date_str}: ошибка при загрузке строки - {str(e)}")
+            conn.rollback()
+            continue
+    
+    print(f"{date_str}: загружено {loaded_count} строк (из {len(data_to_insert)})")
+    return loaded_count
 
 def main():
     start_date = datetime(2025, 7, 1).date()
@@ -202,7 +184,7 @@ def main():
         current_date = start_date
         while current_date <= end_date:
             date_str = current_date.strftime('%Y-%m-%d')
-            print(f"\nОбработка {date_str}")
+            print(f"\n--- Обработка {date_str} ---")
             
             data = get_campaign_stats(YANDEX_TOKEN, date_str, date_str)
             
