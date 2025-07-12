@@ -4,7 +4,6 @@ import psycopg2
 import configparser
 from datetime import datetime, timedelta
 import random
-from yandex_direct import Client  # Импортируем клиент Яндекс.Директ
 
 # Чтение конфигурации
 config = configparser.ConfigParser()
@@ -20,16 +19,13 @@ DB_PARAMS = {
 }
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
-# Инициализация клиента Яндекс.Директ
-client = Client(YANDEX_TOKEN)
-
 # Параметры запросов
-MAX_WAIT_MINUTES = 30  # Максимальное время ожидания отчета (минуты)
-CHECK_DELAY = 30      # Задержка между проверками статуса (секунды)
-REQUEST_DELAY = 3     # Задержка между запросами для разных дней (секунды)
+MAX_WAIT_MINUTES = 30  # Максимальное время ожидания отчета
+CHECK_DELAY = 30       # Задержка между проверками статуса
+REQUEST_DELAY = 3      # Задержка между днями
 
 def get_campaign_stats(token, date_from, date_to):
-    """Получает статистику с проверкой статуса отчета"""
+    """Получает статистику с проверкой статуса через API"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
@@ -57,7 +53,7 @@ def get_campaign_stats(token, date_from, date_to):
     }
 
     try:
-        # Отправляем запрос на формирование отчета
+        # 1. Отправляем запрос на создание отчета
         response = requests.post(
             "https://api.direct.yandex.com/json/v5/reports",
             headers=headers,
@@ -69,52 +65,49 @@ def get_campaign_stats(token, date_from, date_to):
             print(f"{date_from}: отчет готов сразу")
             return response.text
         elif response.status_code == 201:
-            request_id = response.headers.get('Request-Id')
-            print(f"{date_from}: отчет формируется (ID: {request_id})")
-            return wait_for_report(request_id, date_from)
+            print(f"{date_from}: отчет в очереди")
+            return wait_for_report(token, response.headers, date_from)
         else:
-            print(f"{date_from}: ошибка запроса (код {response.status_code}): {response.text}")
+            print(f"{date_from}: ошибка запроса (код {response.status_code})")
             return None
 
     except Exception as e:
         print(f"{date_from}: ошибка соединения: {str(e)}")
         return None
 
-def wait_for_report(request_id, date_str):
-    """Ожидает готовности отчета с выводом статуса"""
+def wait_for_report(token, headers, date_str):
+    """Ожидает готовности отчета через API"""
     start_time = time.time()
+    retry_count = 0
     
-    while True:
-        # Проверяем статус отчета
+    while time.time() - start_time < MAX_WAIT_MINUTES * 60:
+        retry_count += 1
+        print(f"{date_str}: проверка статуса (попытка {retry_count})")
+        
         try:
-            info = client.info(requestId=request_id).get()
-            status = info["log_request"]["status"]
-            print(f"{date_str}: статус обработки - {status}")
-            
-            if status == "processed":
-                print(f"{date_str}: отчет успешно сформирован")
-                return download_report(request_id)
-            elif status == "created" or status == "pending":
-                if time.time() - start_time > MAX_WAIT_MINUTES * 60:
-                    print(f"{date_str}: превышено время ожидания ({MAX_WAIT_MINUTES} минут)")
-                    return None
+            # 2. Проверяем статус отчета
+            status_response = requests.get(
+                "https://api.direct.yandex.com/json/v5/reports",
+                headers=headers,
+                timeout=30
+            )
+
+            if status_response.status_code == 200:
+                print(f"{date_str}: отчет готов")
+                return status_response.text
+            elif status_response.status_code == 201:
+                print(f"{date_str}: отчет еще формируется")
                 time.sleep(CHECK_DELAY)
             else:
-                print(f"{date_str}: ошибка обработки отчета - {status}")
+                print(f"{date_str}: ошибка проверки статуса (код {status_response.status_code})")
                 return None
                 
         except Exception as e:
             print(f"{date_str}: ошибка при проверке статуса: {str(e)}")
-            return None
-
-def download_report(request_id):
-    """Загружает готовый отчет"""
-    try:
-        response = client.download_report(requestId=request_id)
-        return response.text
-    except Exception as e:
-        print(f"Ошибка при загрузке отчета: {str(e)}")
-        return None
+            time.sleep(CHECK_DELAY)
+    
+    print(f"{date_str}: превышено время ожидания ({MAX_WAIT_MINUTES} минут)")
+    return None
 
 def create_table(conn):
     """Создает таблицу в PostgreSQL"""
@@ -174,7 +167,7 @@ def process_and_load_data(conn, tsv_data, date_str):
             continue
     
     if not data_to_insert:
-        print(f"{date_str}: нет валидных данных для загрузки")
+        print(f"{date_str}: нет валидных данных")
         return 0
     
     try:
@@ -188,11 +181,11 @@ def process_and_load_data(conn, tsv_data, date_str):
             """, data_to_insert)
         conn.commit()
         
-        print(f"{date_str}: успешно загружено {len(data_to_insert)} строк")
+        print(f"{date_str}: загружено {len(data_to_insert)} строк")
         return len(data_to_insert)
         
     except Exception as e:
-        print(f"{date_str}: ошибка при загрузке в БД - {str(e)}")
+        print(f"{date_str}: ошибка загрузки в БД - {str(e)}")
         conn.rollback()
         return 0
 
@@ -209,14 +202,14 @@ def main():
         current_date = start_date
         while current_date <= end_date:
             date_str = current_date.strftime('%Y-%m-%d')
-            print(f"\nОбработка данных за {date_str}")
+            print(f"\nОбработка {date_str}")
             
             data = get_campaign_stats(YANDEX_TOKEN, date_str, date_str)
             
             if data:
                 process_and_load_data(conn, data, date_str)
             else:
-                print(f"{date_str}: не удалось получить данные")
+                print(f"{date_str}: данные не получены")
             
             current_date += timedelta(days=1)
             if current_date <= end_date:
@@ -227,7 +220,7 @@ def main():
     finally:
         if conn:
             conn.close()
-        print("\nЗавершение работы скрипта")
+        print("\nЗавершение работы")
 
 if __name__ == '__main__':
     main()
