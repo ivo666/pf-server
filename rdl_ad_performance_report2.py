@@ -4,12 +4,13 @@ import psycopg2
 import configparser
 from datetime import datetime, timedelta
 import random
+from yandex_direct import Client  # Импортируем клиент Яндекс.Директ
 
-# Чтение конфигурации из файла
+# Чтение конфигурации
 config = configparser.ConfigParser()
 config.read('config.ini')
 
-# Параметры подключения к БД
+# Настройки подключения
 DB_PARAMS = {
     'host': config['Database']['HOST'],
     'database': config['Database']['DATABASE'],
@@ -17,17 +18,18 @@ DB_PARAMS = {
     'password': config['Database']['PASSWORD'],
     'port': config['Database']['PORT']
 }
-
-# Токен Яндекс.Директ
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
-# Настройки запросов
-MAX_REPORT_WAIT = 30  # Максимальное время ожидания отчета (минуты)
-RETRY_DELAY = 30  # Секунды между проверками готовности отчета
-REQUEST_DELAY = 5  # Секунды между запросами разных дней
+# Инициализация клиента Яндекс.Директ
+client = Client(YANDEX_TOKEN)
+
+# Параметры запросов
+MAX_WAIT_MINUTES = 30  # Максимальное время ожидания отчета (минуты)
+CHECK_DELAY = 30      # Задержка между проверками статуса (секунды)
+REQUEST_DELAY = 3     # Задержка между запросами для разных дней (секунды)
 
 def get_campaign_stats(token, date_from, date_to):
-    """Получает статистику из Яндекс.Директ за указанный период"""
+    """Получает статистику с проверкой статуса отчета"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
@@ -35,14 +37,11 @@ def get_campaign_stats(token, date_from, date_to):
     }
 
     # Уникальное имя отчета
-    report_name = f"API_Report_{date_from.replace('-', '')}_{random.randint(1000, 9999)}"
+    report_name = f"API_Report_{date_from}_{random.randint(1000, 9999)}"
     
     body = {
         "params": {
-            "SelectionCriteria": {
-                "DateFrom": date_from,
-                "DateTo": date_to
-            },
+            "SelectionCriteria": {"DateFrom": date_from, "DateTo": date_to},
             "FieldNames": [
                 "Date", "CampaignId", "CampaignName", "AdId",
                 "Impressions", "Clicks", "Cost", "AvgClickPosition",
@@ -57,67 +56,68 @@ def get_campaign_stats(token, date_from, date_to):
         }
     }
 
-    # Запрос на формирование отчета
     try:
+        # Отправляем запрос на формирование отчета
         response = requests.post(
             "https://api.direct.yandex.com/json/v5/reports",
             headers=headers,
             json=body,
             timeout=60
         )
+
+        if response.status_code == 200:
+            print(f"{date_from}: отчет готов сразу")
+            return response.text
+        elif response.status_code == 201:
+            request_id = response.headers.get('Request-Id')
+            print(f"{date_from}: отчет формируется (ID: {request_id})")
+            return wait_for_report(request_id, date_from)
+        else:
+            print(f"{date_from}: ошибка запроса (код {response.status_code}): {response.text}")
+            return None
+
     except Exception as e:
-        print(f"{date_from}: ошибка запроса: {str(e)}")
+        print(f"{date_from}: ошибка соединения: {str(e)}")
         return None
 
-    if response.status_code == 200:
-        return response.text
-    elif response.status_code == 201:
-        print(f"{date_from}: отчет формируется, ожидаем...")
-        report_id = response.headers.get('Request-Id')
-        return wait_for_report(token, report_id, date_from)
-    else:
-        print(f"{date_from}: ошибка API (код {response.status_code}): {response.text}")
-        return None
-
-def wait_for_report(token, report_id, date_str):
-    """Ожидает готовности отчета"""
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept-Language": "ru"
-    }
-    
+def wait_for_report(request_id, date_str):
+    """Ожидает готовности отчета с выводом статуса"""
     start_time = time.time()
-    attempts = 0
     
-    while time.time() - start_time < MAX_REPORT_WAIT * 60:
-        attempts += 1
-        time.sleep(RETRY_DELAY)
-        
+    while True:
+        # Проверяем статус отчета
         try:
-            response = requests.get(
-                f"https://api.direct.yandex.com/json/v5/reports/{report_id}",
-                headers=headers,
-                timeout=30
-            )
+            info = client.info(requestId=request_id).get()
+            status = info["log_request"]["status"]
+            print(f"{date_str}: статус обработки - {status}")
             
-            if response.status_code == 200:
-                return response.text
-            elif response.status_code == 201:
-                print(f"{date_str}: отчет еще формируется (попытка {attempts})")
-                continue
+            if status == "processed":
+                print(f"{date_str}: отчет успешно сформирован")
+                return download_report(request_id)
+            elif status == "created" or status == "pending":
+                if time.time() - start_time > MAX_WAIT_MINUTES * 60:
+                    print(f"{date_str}: превышено время ожидания ({MAX_WAIT_MINUTES} минут)")
+                    return None
+                time.sleep(CHECK_DELAY)
             else:
-                print(f"{date_str}: ошибка проверки отчета (код {response.status_code})")
+                print(f"{date_str}: ошибка обработки отчета - {status}")
                 return None
                 
         except Exception as e:
-            print(f"{date_str}: ошибка при проверке отчета: {str(e)}")
-            continue
-    
-    print(f"{date_str}: превышено время ожидания отчета ({MAX_REPORT_WAIT} минут)")
-    return None
+            print(f"{date_str}: ошибка при проверке статуса: {str(e)}")
+            return None
+
+def download_report(request_id):
+    """Загружает готовый отчет"""
+    try:
+        response = client.download_report(requestId=request_id)
+        return response.text
+    except Exception as e:
+        print(f"Ошибка при загрузке отчета: {str(e)}")
+        return None
 
 def create_table(conn):
-    """Создает таблицу в схеме rdl в PostgreSQL"""
+    """Создает таблицу в PostgreSQL"""
     with conn.cursor() as cursor:
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS rdl.ad_performance_report (
@@ -127,7 +127,7 @@ def create_table(conn):
             ad_id BIGINT,
             impressions INTEGER,
             clicks INTEGER,
-            cost DECIMAL(15, 2),  
+            cost DECIMAL(15,2),
             avg_click_position TEXT,
             device TEXT,
             location_of_presence_id INTEGER,
@@ -138,7 +138,7 @@ def create_table(conn):
     conn.commit()
 
 def process_and_load_data(conn, tsv_data, date_str):
-    """Обрабатывает TSV данные и загружает в PostgreSQL"""
+    """Обрабатывает и загружает данные"""
     if not tsv_data:
         print(f"{date_str}: нет данных для загрузки")
         return 0
@@ -169,29 +169,38 @@ def process_and_load_data(conn, tsv_data, date_str):
                 row[10],
                 row[11]
             ))
-        except ValueError:
+        except ValueError as e:
+            print(f"{date_str}: ошибка в строке данных - {str(e)}")
             continue
     
     if not data_to_insert:
         print(f"{date_str}: нет валидных данных для загрузки")
         return 0
     
-    with conn.cursor() as cursor:
-        cursor.executemany("""
-        INSERT INTO rdl.ad_performance_report (
-            date, campaign_id, campaign_name, ad_id, impressions, 
-            clicks, cost, avg_click_position, device, 
-            location_of_presence_id, match_type, slot
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, data_to_insert)
-    conn.commit()
-    
-    print(f"{date_str}: успешно загружено {len(data_to_insert)} строк")
-    return len(data_to_insert)
+    try:
+        with conn.cursor() as cursor:
+            cursor.executemany("""
+            INSERT INTO rdl.ad_performance_report (
+                date, campaign_id, campaign_name, ad_id, impressions, 
+                clicks, cost, avg_click_position, device, 
+                location_of_presence_id, match_type, slot
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, data_to_insert)
+        conn.commit()
+        
+        print(f"{date_str}: успешно загружено {len(data_to_insert)} строк")
+        return len(data_to_insert)
+        
+    except Exception as e:
+        print(f"{date_str}: ошибка при загрузке в БД - {str(e)}")
+        conn.rollback()
+        return 0
 
 def main():
     start_date = datetime(2025, 7, 1).date()
     end_date = (datetime.now() - timedelta(days=1)).date()
+    
+    print(f"Начало загрузки данных с {start_date} по {end_date}")
     
     try:
         conn = psycopg2.connect(**DB_PARAMS)
@@ -200,6 +209,8 @@ def main():
         current_date = start_date
         while current_date <= end_date:
             date_str = current_date.strftime('%Y-%m-%d')
+            print(f"\nОбработка данных за {date_str}")
+            
             data = get_campaign_stats(YANDEX_TOKEN, date_str, date_str)
             
             if data:
@@ -212,10 +223,11 @@ def main():
                 time.sleep(REQUEST_DELAY)
                 
     except Exception as e:
-        print(f"Ошибка: {str(e)}")
+        print(f"\nКритическая ошибка: {str(e)}")
     finally:
         if conn:
             conn.close()
+        print("\nЗавершение работы скрипта")
 
 if __name__ == '__main__':
     main()
