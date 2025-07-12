@@ -19,12 +19,12 @@ DB_PARAMS = {
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
 # Параметры запросов
-MAX_WAIT_MINUTES = 30  # Максимальное время ожидания отчета
-CHECK_DELAY = 30       # Проверка статуса каждые 30 секунд
-REQUEST_DELAY = 5      # Пауза между днями
+MAX_RETRIES = 5  # Увеличим количество попыток
+RETRY_DELAY = 15  # Увеличим задержку между попытками
+REQUEST_DELAY = 3  # Пауза между днями
 
 def get_campaign_stats(token, date):
-    """Запрашивает отчет и дожидается его готовности"""
+    """Получает статистику за день с повторными попытками"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
@@ -39,7 +39,7 @@ def get_campaign_stats(token, date):
                 "Impressions", "Clicks", "Cost", "AvgClickPosition",
                 "Device", "LocationOfPresenceId", "MatchType", "Slot"
             ],
-            "ReportName": f"API_Report_{date}",
+            "ReportName": f"API_Report_{date.replace('-', '')}",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -48,67 +48,33 @@ def get_campaign_stats(token, date):
         }
     }
 
-    # 1. Отправляем запрос на создание отчета
-    try:
-        response = requests.post(
-            "https://api.direct.yandex.com/json/v5/reports",
-            headers=headers,
-            json=body,
-            timeout=60
-        )
-    except Exception as e:
-        print(f"{date}: ошибка запроса - {str(e)}")
-        return None
-
-    # 2. Обрабатываем ответ
-    if response.status_code == 200:
-        return response.text
-    elif response.status_code == 201:
-        print(f"{date}: отчет в очереди, ожидаем...")
-        return wait_for_report(headers, date)
-    else:
-        print(f"{date}: ошибка API (код {response.status_code})")
-        return None
-
-def wait_for_report(headers, date):
-    """Ожидает готовности отчета"""
-    start_time = time.time()
-    attempt = 0
-    
-    while time.time() - start_time < MAX_WAIT_MINUTES * 60:
-        attempt += 1
-        time.sleep(CHECK_DELAY)
-        
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
-            # Повторяем исходный запрос для проверки статуса
             response = requests.post(
                 "https://api.direct.yandex.com/json/v5/reports",
                 headers=headers,
-                json={
-                    "params": {
-                        "SelectionCriteria": {"DateFrom": date, "DateTo": date},
-                        "ReportName": f"API_Report_{date}",
-                        "ReportType": "AD_PERFORMANCE_REPORT"
-                    }
-                },
-                timeout=30
+                json=body,
+                timeout=60
             )
 
             if response.status_code == 200:
-                print(f"{date}: отчет готов")
+                print(f"{date}: данные получены (попытка {attempt})")
                 return response.text
             elif response.status_code == 201:
-                print(f"{date}: все еще формируется (попытка {attempt})")
+                print(f"{date}: отчет формируется (попытка {attempt}), ждем {RETRY_DELAY} сек...")
+                time.sleep(RETRY_DELAY)
                 continue
             else:
-                print(f"{date}: ошибка проверки статуса (код {response.status_code})")
-                return None
-                
+                print(f"{date}: ошибка {response.status_code} (попытка {attempt})")
+                time.sleep(RETRY_DELAY)
+                continue
+
         except Exception as e:
-            print(f"{date}: ошибка при проверке статуса - {str(e)}")
+            print(f"{date}: ошибка соединения (попытка {attempt}): {str(e)}")
+            time.sleep(RETRY_DELAY)
             continue
-    
-    print(f"{date}: превышено время ожидания ({MAX_WAIT_MINUTES} минут)")
+
+    print(f"{date}: не удалось получить данные после {MAX_RETRIES} попыток")
     return None
 
 def create_table(conn):
