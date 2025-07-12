@@ -53,7 +53,7 @@ def get_campaign_stats(token, date):
                 "MatchType",
                 "Slot"
             ],
-            "ReportName": "API_Report_Extended123",
+            "ReportName": "API_Report_Extended1231",
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
