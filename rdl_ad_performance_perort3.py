@@ -176,7 +176,7 @@ def process_and_load_data(conn, tsv_data, date):
     return loaded_count
 
 def main():
-    start_date = datetime(2025, 7, 1).date()
+    start_date = datetime(2025, 5, 1).date()
     end_date = (datetime.now() - timedelta(days=1)).date()
     
     print(f"Начало загрузки данных с {start_date} по {end_date}")
