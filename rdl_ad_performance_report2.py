@@ -20,13 +20,12 @@ DB_PARAMS = {
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
 # Параметры запросов
-MAX_ATTEMPTS = 5  # Максимальное количество попыток
-INITIAL_DELAY = 10  # Начальная задержка между попытками (сек)
-MAX_DELAY = 300    # Максимальная задержка (5 минут)
-REQUEST_DELAY = 5  # Задержка между днями (сек)
+MAX_ATTEMPTS = 5
+INITIAL_DELAY = 10
+MAX_DELAY = 300
+REQUEST_DELAY = 5
 
 def get_campaign_stats(token, date_from, date_to):
-    """Получает статистику с экспоненциальной задержкой"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept-Language": "ru",
@@ -34,7 +33,6 @@ def get_campaign_stats(token, date_from, date_to):
     }
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        # Уникальное имя отчета для каждой попытки
         report_name = f"API_Report_{date_from}_{attempt}_{random.randint(1000, 9999)}"
         
         body = {
@@ -55,7 +53,6 @@ def get_campaign_stats(token, date_from, date_to):
         }
 
         try:
-            # Рассчитываем экспоненциальную задержку
             delay = min(INITIAL_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
             
             response = requests.post(
@@ -86,7 +83,6 @@ def get_campaign_stats(token, date_from, date_to):
     return None
 
 def create_table(conn):
-    """Создает таблицу в PostgreSQL"""
     with conn.cursor() as cursor:
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS rdl.ad_performance_report (
@@ -102,18 +98,17 @@ def create_table(conn):
             location_of_presence_id INTEGER,
             match_type TEXT,
             slot TEXT,
-            UNIQUE(date, campaign_id, ad_id, device, location_of_presence_id)  # Добавляем ограничение уникальности
+            UNIQUE(date, campaign_id, ad_id, device, location_of_presence_id)
         )
         """)
     conn.commit()
 
 def process_and_load_data(conn, tsv_data, date_str):
-    """Обрабатывает и загружает данные с обработкой дубликатов"""
     if not tsv_data:
         print(f"{date_str}: нет данных для загрузки")
         return 0
     
-    lines = tsv_data.strip().split('\n')[2:]  # Пропускаем заголовки
+    lines = tsv_data.strip().split('\n')[2:]
     
     data_to_insert = []
     for line in lines:
@@ -151,7 +146,6 @@ def process_and_load_data(conn, tsv_data, date_str):
     for data in data_to_insert:
         try:
             with conn.cursor() as cursor:
-                # Используем ON CONFLICT DO NOTHING для пропуска дубликатов
                 cursor.execute("""
                 INSERT INTO rdl.ad_performance_report (
                     date, campaign_id, campaign_name, ad_id, impressions, 
@@ -177,6 +171,7 @@ def main():
     
     print(f"Начало загрузки данных с {start_date} по {end_date}")
     
+    conn = None
     try:
         conn = psycopg2.connect(**DB_PARAMS)
         create_table(conn)
