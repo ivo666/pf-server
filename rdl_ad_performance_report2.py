@@ -3,6 +3,7 @@ import time
 import psycopg2
 import configparser
 from datetime import datetime, timedelta
+import random
 
 # Чтение конфигурации из файла
 config = configparser.ConfigParser()
@@ -21,11 +22,11 @@ DB_PARAMS = {
 YANDEX_TOKEN = config['YandexDirect']['ACCESS_TOKEN']
 
 # Настройки запросов
-MAX_RETRIES = 3
-RETRY_DELAY = 15  # Секунды между попытками
-REQUEST_DELAY = 20  # Пауза между запросами разных дней
+MAX_RETRIES = 5  # Увеличили количество попыток
+RETRY_DELAY = 15  # Увеличили задержку между попытками
+REQUEST_DELAY = 5  # Увеличили задержку между днями
 
-def get_campaign_stats(token, date_from, date_to):
+def get_campaign_stats(token, date_from, date_to, attempt_num):
     """Получает статистику из Яндекс.Директ за указанный период"""
     headers = {
         "Authorization": f"Bearer {token}",
@@ -33,6 +34,9 @@ def get_campaign_stats(token, date_from, date_to):
         "Content-Type": "application/json"
     }
 
+    # Добавляем случайный суффикс к названию отчета
+    report_name = f"API_Report_Extended_{random.randint(1000, 9999)}"
+    
     body = {
         "params": {
             "SelectionCriteria": {
@@ -53,7 +57,7 @@ def get_campaign_stats(token, date_from, date_to):
                 "MatchType",
                 "Slot"
             ],
-            "ReportName": "API_Report_Extended222",
+            "ReportName": report_name,  # Уникальное имя отчета
             "ReportType": "AD_PERFORMANCE_REPORT",
             "DateRangeType": "CUSTOM_DATE",
             "Format": "TSV",
@@ -62,30 +66,26 @@ def get_campaign_stats(token, date_from, date_to):
         }
     }
 
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.post(
-                "https://api.direct.yandex.com/json/v5/reports",
-                headers=headers,
-                json=body,
-                timeout=30
-            )
+    try:
+        response = requests.post(
+            "https://api.direct.yandex.com/json/v5/reports",
+            headers=headers,
+            json=body,
+            timeout=60
+        )
 
-            if response.status_code == 200:
-                return response.text
-            elif response.status_code == 201:
-                print(f"Отчет формируется... (попытка {attempt + 1})")
-                time.sleep(RETRY_DELAY)
-            else:
-                print(f"Ошибка {response.status_code}: {response.text}")
-                return None
-
-        except Exception as e:
-            print(f"Ошибка соединения: {str(e)}")
+        if response.status_code == 200:
+            return response.text
+        elif response.status_code == 201:
+            print(f"{date_from}: отчет формируется (попытка {attempt_num})")
+            return None
+        else:
+            print(f"{date_from}: ошибка API (код {response.status_code}): {response.text}")
             return None
 
-    print("Достигнуто максимальное число попыток.")
-    return None
+    except Exception as e:
+        print(f"{date_from}: ошибка соединения: {str(e)}")
+        return None
 
 def create_table(conn):
     """Создает таблицу в схеме rdl в PostgreSQL"""
@@ -112,7 +112,6 @@ def create_table(conn):
 def process_and_load_data(conn, tsv_data, date):
     """Обрабатывает TSV данные и загружает в PostgreSQL"""
     if not tsv_data:
-        print(f"{date}: нет данных для загрузки")
         return 0
     
     tsv_data = tsv_data.strip()
@@ -144,12 +143,10 @@ def process_and_load_data(conn, tsv_data, date):
                 row[10],
                 row[11]
             ))
-        except ValueError as e:
-            print(f"Ошибка преобразования данных в строке: {row}. Ошибка: {e}")
+        except ValueError:
             continue
     
     if not data_to_insert:
-        print(f"{date}: нет валидных данных для вставки")
         return 0
     
     insert_query = """
@@ -163,7 +160,6 @@ def process_and_load_data(conn, tsv_data, date):
     with conn.cursor() as cursor:
         cursor.executemany(insert_query, data_to_insert)
     conn.commit()
-    print(f"{date}: успешно загружено {len(data_to_insert)} строк")
     return len(data_to_insert)
 
 def main():
@@ -180,12 +176,24 @@ def main():
         current_date = start_date
         while current_date <= end_date:
             date_str = current_date.strftime("%Y-%m-%d")
-            data = get_campaign_stats(YANDEX_TOKEN, date_str, date_str)
+            loaded = False
             
-            if data:
-                process_and_load_data(conn, data, date_str)
-            else:
-                print(f"{date_str}: данные не получены")
+            for attempt in range(MAX_RETRIES):
+                data = get_campaign_stats(YANDEX_TOKEN, date_str, date_str, attempt+1)
+                
+                if data:
+                    count = process_and_load_data(conn, data, date_str)
+                    if count > 0:
+                        print(f"{date_str}: успешно загружено {count} строк")
+                        loaded = True
+                        break
+                    else:
+                        print(f"{date_str}: нет данных для загрузки")
+                elif attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY)
+            
+            if not loaded:
+                print(f"{date_str}: не удалось загрузить данные после {MAX_RETRIES} попыток")
             
             current_date += timedelta(days=1)
             if current_date <= end_date:
