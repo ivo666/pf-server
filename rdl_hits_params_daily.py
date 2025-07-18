@@ -123,21 +123,42 @@ class YMHitsParamsDailyDownloader:
             logger.error(f"Не удалось разобрать параметры: {params_str}. Ошибка: {e}")
             return {}
 
-    def load_data_to_db(self, data):
+    def check_data_exists(self, date):
+        """Проверяет, есть ли уже данные за указанную дату"""
+        conn = None
+        try:
+            conn = psycopg2.connect(**self.db_params)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT EXISTS(
+                        SELECT 1 FROM rdl.ym_hits_params 
+                        WHERE date_time::date = %s 
+                        LIMIT 1
+                    )
+                """, (date,))
+                return cur.fetchone()[0]
+        except Exception as e:
+            logger.error(f"Ошибка при проверке существующих данных: {str(e)}")
+            return True  # В случае ошибки предполагаем, что данные есть
+        finally:
+            if conn:
+                conn.close()
+
+    def load_data_to_db(self, data, date):
         """Загрузка данных в PostgreSQL"""
         if not data:
             logger.warning("Нет данных для загрузки")
+            return False
+
+        # Проверяем, есть ли уже данные за эту дату
+        if self.check_data_exists(date):
+            logger.info(f"Данные за {date} уже существуют, пропускаем загрузку")
             return False
 
         conn = None
         try:
             conn = psycopg2.connect(**self.db_params)
             with conn.cursor() as cur:
-                # Получаем количество строк до вставки
-                cur.execute("SELECT COUNT(*) FROM rdl.ym_hits_params")
-                count_before = cur.fetchone()[0]
-                
-                # Выполняем вставку
                 execute_batch(cur, """
                     INSERT INTO rdl.ym_hits_params (
                         watch_id, page_view_id, client_id, date_time,
@@ -153,18 +174,9 @@ class YMHitsParamsDailyDownloader:
                     ON CONFLICT (watch_id) DO NOTHING
                 """, data)
                 
-                # Получаем количество строк после вставки
-                cur.execute("SELECT COUNT(*) FROM rdl.ym_hits_params")
-                count_after = cur.fetchone()[0]
-                
-                inserted_rows = count_after - count_before
-                if inserted_rows > 0:
-                    logger.info(f"Успешно загружено {inserted_rows} новых записей")
-                else:
-                    logger.info("Новых данных для загрузки не обнаружено (все записи уже существуют)")
-                
                 conn.commit()
-                return inserted_rows > 0
+                logger.info(f"Успешно загружено {len(data)} записей за {date}")
+                return True
                 
         except Exception as e:
             if conn:
@@ -181,6 +193,11 @@ class YMHitsParamsDailyDownloader:
             # Получаем вчерашнюю дату
             yesterday = self.get_yesterday_date()
             logger.info(f"Начало обработки данных за {yesterday}")
+            
+            # Проверяем, есть ли уже данные за эту дату
+            if self.check_data_exists(yesterday):
+                logger.info(f"Данные за {yesterday} уже существуют, пропускаем загрузку")
+                return False
             
             # Инициализация клиента API
             ym_client = self.get_ym_client()
@@ -236,7 +253,7 @@ class YMHitsParamsDailyDownloader:
             
             # Загрузка в БД
             if prepared_data:
-                return self.load_data_to_db(prepared_data)
+                return self.load_data_to_db(prepared_data, yesterday)
             else:
                 logger.warning("Нет данных для загрузки за вчерашний день")
                 return False
@@ -247,6 +264,12 @@ class YMHitsParamsDailyDownloader:
 
 if __name__ == "__main__":
     downloader = YMHitsParamsDailyDownloader()
+    
+    # Проверяем данные перед началом обработки
+    yesterday = downloader.get_yesterday_date()
+    if downloader.check_data_exists(yesterday):
+        logger.info(f"Данные за {yesterday} уже существуют, завершаем работу")
+        sys.exit(0)
     
     # Попробуем выполнить обработку до 3 раз при ошибках
     max_attempts = 3
