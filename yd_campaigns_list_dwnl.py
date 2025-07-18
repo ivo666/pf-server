@@ -82,14 +82,14 @@ def main():
         except Exception as e:
             raise Exception(f"Ошибка PostgreSQL: {str(e)}")
 
-        # 4. Загрузка данных в схему "row"
+        # 4. Загрузка данных в схему "rdl"
         try:
             with engine.begin() as connection:
                 # Указываем схему в параметре schema
                 df.to_sql(
                     'yd_campaigns_list',
                     connection,
-                    schema='row',  # Указываем целевую схему
+                    schema='rdl',  # Указываем целевую схему
                     if_exists='append',
                     index=False,
                     dtype={
@@ -105,9 +105,9 @@ def main():
             
             # Проверка загруженных данных
             with engine.connect() as conn:
-                result = pd.read_sql('SELECT * FROM "row".yd_campaigns_list LIMIT 5', conn)
+                result = pd.read_sql('SELECT * FROM "rdl".yd_campaigns_list LIMIT 5', conn)
                 logging.info(f"Первые 5 записей:\n{result.to_string()}")
-                count = pd.read_sql('SELECT COUNT(*) as count FROM "row".yd_campaigns_list', conn)['count'].iloc[0]
+                count = pd.read_sql('SELECT COUNT(*) as count FROM "rdl".yd_campaigns_list', conn)['count'].iloc[0]
                 logging.info(f"Всего записей в таблице: {count}")
                 
         except Exception as e:
