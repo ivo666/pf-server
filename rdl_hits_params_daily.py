@@ -124,56 +124,56 @@ class YMHitsParamsDailyDownloader:
             return {}
 
     def load_data_to_db(self, data):
-    """Загрузка данных в PostgreSQL"""
-    if not data:
-        logger.warning("Нет данных для загрузки")
-        return False
+        """Загрузка данных в PostgreSQL"""
+        if not data:
+            logger.warning("Нет данных для загрузки")
+            return False
 
-    conn = None
-    try:
-        conn = psycopg2.connect(**self.db_params)
-        with conn.cursor() as cur:
-            # Получаем количество строк до вставки
-            cur.execute("SELECT COUNT(*) FROM rdl.ym_hits_params")
-            count_before = cur.fetchone()[0]
-            
-            # Выполняем вставку
-            execute_batch(cur, """
-                INSERT INTO rdl.ym_hits_params (
-                    watch_id, page_view_id, client_id, date_time,
-                    title, url, is_page_view, artificial,
-                    event_category, event_action, event_label, button_location,
-                    event_content, event_context, action_group, page_path
-                ) VALUES (
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s
-                )
-                ON CONFLICT (watch_id) DO NOTHING
-            """, data)
-            
-            # Получаем количество строк после вставки
-            cur.execute("SELECT COUNT(*) FROM rdl.ym_hits_params")
-            count_after = cur.fetchone()[0]
-            
-            inserted_rows = count_after - count_before
-            if inserted_rows > 0:
-                logger.info(f"Успешно загружено {inserted_rows} новых записей за вчерашний день")
-            else:
-                logger.info("Новых данных для загрузки не обнаружено (все записи уже существуют)")
-            
-            conn.commit()
-            return True
-            
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"Ошибка при загрузке данных в БД: {str(e)}")
-        return False
-    finally:
-        if conn:
-            conn.close()
+        conn = None
+        try:
+            conn = psycopg2.connect(**self.db_params)
+            with conn.cursor() as cur:
+                # Получаем количество строк до вставки
+                cur.execute("SELECT COUNT(*) FROM rdl.ym_hits_params")
+                count_before = cur.fetchone()[0]
+                
+                # Выполняем вставку
+                execute_batch(cur, """
+                    INSERT INTO rdl.ym_hits_params (
+                        watch_id, page_view_id, client_id, date_time,
+                        title, url, is_page_view, artificial,
+                        event_category, event_action, event_label, button_location,
+                        event_content, event_context, action_group, page_path
+                    ) VALUES (
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s
+                    )
+                    ON CONFLICT (watch_id) DO NOTHING
+                """, data)
+                
+                # Получаем количество строк после вставки
+                cur.execute("SELECT COUNT(*) FROM rdl.ym_hits_params")
+                count_after = cur.fetchone()[0]
+                
+                inserted_rows = count_after - count_before
+                if inserted_rows > 0:
+                    logger.info(f"Успешно загружено {inserted_rows} новых записей")
+                else:
+                    logger.info("Новых данных для загрузки не обнаружено (все записи уже существуют)")
+                
+                conn.commit()
+                return inserted_rows > 0
+                
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Ошибка при загрузке данных в БД: {str(e)}")
+            return False
+        finally:
+            if conn:
+                conn.close()
 
     def process_yesterday(self):
         """Обработка данных за вчерашний день"""
@@ -239,7 +239,7 @@ class YMHitsParamsDailyDownloader:
                 return self.load_data_to_db(prepared_data)
             else:
                 logger.warning("Нет данных для загрузки за вчерашний день")
-                return True
+                return False
                 
         except Exception as e:
             logger.error(f"Ошибка при обработке данных за вчерашний день: {str(e)}")
