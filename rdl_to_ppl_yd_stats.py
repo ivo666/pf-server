@@ -9,10 +9,11 @@ config.read('config.ini')
 
 # Настраиваем подключение
 db_connect = {
-    'host': config['Database']['host'],
-    'user': config['Database']['user'],
-    'database': config['Database']['database'],
-    'password': config['Database']['password']
+    'host': config['Database']['HOST'],
+    'database': config['Database']['DATABASE'],
+    'user': config['Database']['USER'],
+    'password': config['Database']['PASSWORD'],
+    'port': config['Database']['PORT']
 }
 
 # Содаем переменную-sql-запрос чтения данных
