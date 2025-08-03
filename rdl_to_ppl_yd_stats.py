@@ -31,12 +31,12 @@ select date
  , location_of_presence_id
  , match_type
  , slot
-from yd_ad_performance_report yapr
+from rdl.yd_ad_performance_report yapr
 join (select campaign
      , utm_campaign
      , content_id
      , content_profit
-    from yd_campaigns_list ycl
+    from rdl.yd_campaigns_list ycl
     order by campaign, utm_campaign
 ) cn on cn.campaign = yapr.campaign_name and cn.content_id = yapr.ad_id::text
 """
