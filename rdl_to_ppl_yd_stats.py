@@ -25,7 +25,7 @@ select date
  , cn.content_profit as content_benefit
  , impressions
  , clicks
- , round((cost * 1.0 / 1000000) / clicks, 2) as click_cost
+ , round((cost * 1.0 / 1000000) / NULLIF(clicks, 0), 2) as click_cost
  , avg_click_position as click_position
  , device
  , location_of_presence_id
