@@ -72,8 +72,10 @@ def get_queries():
             TRUNCATE TABLE cdm.table_visits;
             INSERT INTO cdm.table_visits
             WITH _source AS (
-                SELECT t.client_id, t.visit_id, t."date", t.date_time, t.is_new_user,
-                       t.start_url, t.end_url, t2.page_view, t.visit_duration
+                SELECT t.client_id, t.visit_id, t."date", t.date_time, t.is_new_user
+                       , split_part(t.start_url, '?', 1) as start_url
+                       , split_part(t.end_url, '?', 1) as end_url
+                       , t2.page_view, t.visit_duration
                        , case
                          	when search_engine_root = 'yandex' then 'yandex'
                          	when search_engine_root = 'google' then 'google'
