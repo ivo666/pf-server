@@ -82,6 +82,7 @@ def get_queries():
                          	when search_engine_root = 'rambler' then 'rambler'
                          	when search_engine_root = 'ecosia' then 'ecosia'
                          	when search_engine_root = 'duckduckgo' then 'duckduckgo'
+                            when referer like any (array ['https://yandex.ru/images/search%', 'https://yandex.ru/maps/%']) then 'yandex'
                          	when t.utm_source = 'yandex_rsya' then 'yandex_rsya'
                          	when t.traffic_source  = 'ad' and direct_platform_type in ('Search', 'Context') then 'yandex_poisk'
                          	when t.utm_source = 'ya_poisk' then 'yandex_poisk'
@@ -99,6 +100,7 @@ def get_queries():
                         , case
                         	when t.utm_source in ('spravker', 'jSprav') then 'referral'
                            	when t.traffic_source = 'organic' then 'organic'
+                            when referer like any (array ['https://yandex.ru/images/search%', 'https://yandex.ru/maps/%']) then 'organic'
                            	when t.utm_medium = 'cpc' then 'cpc'
                            	when t.referal_source = 'e.mail.ru' then 'mail'
                            	when t.traffic_source = 'referral' then 'referral'
