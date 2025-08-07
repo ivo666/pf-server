@@ -69,13 +69,41 @@ def get_queries():
             INSERT INTO cdm.table_visits
             WITH _source AS (
                 SELECT t.client_id, t.visit_id, t."date", t.date_time, t.is_new_user,
-                       t.start_url, t.end_url, t2.page_view, t.visit_duration,
-                       CASE
-                           WHEN search_engine_root = 'yandex' THEN 'yandex'
-                           WHEN search_engine_root = 'google' THEN 'google'
-                           /* ... остальные условия ... */
-                           ELSE 'indef'
-                       END AS medium,
+                       t.start_url, t.end_url, t2.page_view, t.visit_duration
+                       , case
+                         	when search_engine_root = 'yandex' then 'yandex'
+                         	when search_engine_root = 'google' then 'google'
+                         	when search_engine_root = 'bing' then 'bing'
+                         	when search_engine_root = 'yahoo' then 'yahoo'
+                         	when search_engine_root = 'rambler' then 'rambler'
+                         	when search_engine_root = 'ecosia' then 'ecosia'
+                         	when search_engine_root = 'duckduckgo' then 'duckduckgo'
+                         	when t.utm_source = 'yandex_rsya' then 'yandex_rsya'
+                         	when t.traffic_source  = 'ad' and direct_platform_type in ('Search', 'Context') then 'yandex_poisk'
+                         	when t.utm_source = 'ya_poisk' then 'yandex_poisk'
+                         	when t.utm_medium = 'cpc' then t.utm_source
+                         	when t.referal_source = 'e.mail.ru' then 'mail.ru'
+                         	when t.utm_source = 'jSprav' then 'jSprav'
+                         	when t.traffic_source = 'referral' then referal_source
+                         	when t.utm_source = 'spravker' then t.referer
+                         	when t.traffic_source  = 'social' then social_network
+                         	when t.traffic_source  = 'messenger' then t.messenger 
+                         	when t.traffic_source  = 'direct' then 'direct'
+                         	when t.traffic_source  = 'internal' then t.referer  	
+                         END as source
+                        , case
+                        	when t.utm_source in ('spravker', 'jSprav') then 'referral'
+                           	when t.traffic_source = 'organic' then 'organic'
+                           	when t.utm_medium = 'cpc' then 'cpc'
+                           	when t.referal_source = 'e.mail.ru' then 'mail'
+                           	when t.traffic_source = 'referral' then 'referral'
+                           	when t.traffic_source  = 'social' then 'social'
+                           	when t.traffic_source  = 'messenger' then 'messenger'
+                           	when t.traffic_source  = 'direct' then 'none'
+                           	when t.traffic_source  = 'internal' then 'internal'
+                           	when t.traffic_source  = 'ad' then 'cpc'
+                           	else 'indef'
+                           end as medium,
                        t.utm_source, t.utm_medium, t.utm_campaign, 
                        t.utm_content, t.utm_term, t.referer
                 FROM rdl.ym_visits t INNER JOIN (
