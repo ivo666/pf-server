@@ -89,7 +89,7 @@ def get_queries():
                          	when t.traffic_source  = 'social' then social_network
                          	when t.traffic_source  = 'messenger' then t.messenger 
                          	when t.traffic_source  = 'direct' then 'direct'
-                         	when t.traffic_source  = 'internal' then regexp_replace(t.referer, 	'^https?://([^/]+).*$', '\1')  	
+                         	when t.traffic_source  = 'internal' then regexp_replace(t.referer, '^https?://([^/]+).*$', '\1')  	
                          END as source
                         , case
                         	when t.utm_source in ('spravker', 'jSprav') then 'referral'
