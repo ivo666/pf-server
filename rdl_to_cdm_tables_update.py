@@ -34,7 +34,7 @@ def get_queries():
                     WHERE region_country = 'Russia' 
                       AND device_category = '1'
                       AND referer NOT IN ('metrika.yandex.ru', 'klaue.cloudbpm.ru')
-                      AND client_id NOT IN ('1742907795159016963', '1690275728585926726', '1745571831246112348')
+                      AND client_id NOT IN ('1742907795159016963', '1690275728585926726', '1745571831246112348', '1660561659524790881', '171759016385815372', '1739452086606602606', '1744210585372274818', '1745570119620709361', '1745570221463237118', '1745571778695559054', '1745571831246112348')
                 ) yvc ON yv.client_id = yvc.client_id
             )
             SELECT client_id, city, browser, screen_width, screen_height 
@@ -89,7 +89,7 @@ def get_queries():
                          	when t.traffic_source  = 'social' then social_network
                          	when t.traffic_source  = 'messenger' then t.messenger 
                          	when t.traffic_source  = 'direct' then 'direct'
-                         	when t.traffic_source  = 'internal' then t.referer  	
+                         	when t.traffic_source  = 'internal' then regexp_replace(t.referer, 	'^https?://([^/]+).*$', '\1')  	
                          END as source
                         , case
                         	when t.utm_source in ('spravker', 'jSprav') then 'referral'
