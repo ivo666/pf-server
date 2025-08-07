@@ -33,7 +33,7 @@ def get_queries():
                     FROM rdl.ym_visits 
                     WHERE region_country = 'Russia' 
                       AND device_category = '1'
-                      AND referer NOT IN ('metrika.yandex.ru', 'klaue.cloudbpm.ru')
+                      AND (referer not in ('metrika.yandex.ru', 'klaue.cloudbpm.ru') OR referal_source != 'metrika.yandex.ru')
                       AND client_id NOT IN ('1742907795159016963', '1690275728585926726', '1745571831246112348', '1660561659524790881', '171759016385815372', '1739452086606602606', '1744210585372274818', '1745570119620709361', '1745570221463237118', '1745571778695559054', '1745571831246112348')
                 ) yvc ON yv.client_id = yvc.client_id
             )
