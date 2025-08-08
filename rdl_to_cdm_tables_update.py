@@ -121,9 +121,11 @@ def get_queries():
                         FROM cdm.table_hits th 
                         WHERE url != 'goal://profi-filter.ru/pf_event' 
                         GROUP BY visit_id, url
-                    )
+                    ), b AS (
                     SELECT visit_id, COUNT(url) OVER(PARTITION BY visit_id) AS page_view
                     FROM a
+                    )
+                    SELECT * FROM b GROUP BY 1, 2
                 ) AS t2 ON t.visit_id = t2.visit_id
                 WHERE t.date >= '2025-06-01'
             ) 
