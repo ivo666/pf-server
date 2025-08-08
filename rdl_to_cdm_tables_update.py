@@ -116,16 +116,25 @@ def get_queries():
                        t.utm_source, t.utm_medium, t.utm_campaign, 
                        t.utm_content, t.utm_term, t.referer
                 FROM rdl.ym_visits t INNER JOIN (
-                    WITH a AS (
-                        SELECT th.visit_id, split_part(url, '?', 1) AS url
-                        FROM cdm.table_hits th 
-                        WHERE url != 'goal://profi-filter.ru/pf_event' 
-                        GROUP BY visit_id, url
-                    ), b AS (
-                    SELECT visit_id, COUNT(url) OVER(PARTITION BY visit_id) AS page_view
-                    FROM a
-                    )
-                    SELECT * FROM b GROUP BY 1, 2
+                    with a as (
+                       select t2.visit_id
+                              , max(date_time) over (partition by visit_id) - min(date_time) over (partition by visit_id) as visit_duration 
+                              , split_part(url, '?', 1) as url
+                           -- , t1.*
+                              from rdl.ym_hits_params t1 inner join (
+                                        select visit_id, unnest(watch_ids) watch_id
+                                        from rdl.ym_visits yv inner join (
+                                                       select client_id 
+                                                       from cdm.table_clients
+                                                       ) tc on yv.client_id = tc.client_id    
+                                        ) t2 on t1.watch_id  = t2.watch_id  
+                              ) 
+                            select visit_id
+                                 , EXTRACT(EPOCH FROM visit_duration::TIME) as visit_duration
+                                 , count(distinct url) as page_view 
+                            from a
+                            where url != 'goal://profi-filter.ru/pf_event' 
+                            group by 1, 2  
                 ) AS t2 ON t.visit_id = t2.visit_id
                 WHERE t.date >= '2025-06-01'
             ) 
