@@ -48,8 +48,42 @@ def get_queries():
         'hits': """
             TRUNCATE TABLE cdm.table_hits;
             INSERT INTO cdm.table_hits
-            WITH a AS (
-                SELECT thp.*, tw.watch_id AS w_watch_id, tw.visit_id, tw.client_id AS w_client_id
+                        WITH a AS (
+                SELECT thp.watch_id
+                , thp.page_view_id
+                , thp.client_id
+                , thp.date_time
+                , thp.title
+                , thp.url
+                , thp.is_page_view
+                , thp.artificial
+                , case 
+                	when is_page_view = '1' then 'page_view'
+                	else thp.event_category   
+                end as new_event_category
+                , case 
+                	when is_page_view = '1' then 'page_view'
+                	else thp.event_action 
+                end as new_event_action                
+                , case 
+                	when is_page_view = '1' then 'page_view'
+                	else thp.event_label 
+                end as new_event_label                
+                , thp.button_location
+                , thp.event_content
+                , thp.event_context
+                , case 
+                	when is_page_view = '1' then 'non_interactions'
+                	else thp.action_group  
+                end as new_action_group  
+                , thp.page_path
+                , case 
+                	when thp.page_path is not null then thp.page_path
+                	else split_part((split_part(url, '.ru', 2)), '?', 1) 
+                end as page_location
+                , tw.watch_id AS w_watch_id
+                , tw.visit_id
+                , tw.client_id AS w_client_id
                 FROM rdl.ym_hits_params thp INNER JOIN (
                     SELECT tv.client_id, visit_id, UNNEST(watch_ids) AS watch_id 
                     FROM rdl.ym_visits tv INNER JOIN (SELECT client_id FROM cdm.table_clients) tc
@@ -61,12 +95,16 @@ def get_queries():
                 OR thp.url LIKE ('goal://profi-filter.ru/pf_event')
                 AND thp.button_location != 'mob_menu'
             ), b AS (
-                SELECT visit_id, watch_id, w_client_id AS client_id, date_time, title, url, 
-                       is_page_view, event_category, event_action, event_label, 
-                       button_location, event_content, event_context, action_group, page_path
+                SELECT visit_id, watch_id, w_client_id AS client_id, date_time
+                       , new_event_category event_category
+                       , new_event_action event_action
+                       , new_event_label event_label
+                       , button_location, event_content, event_context
+                       , new_action_group action_group
+                       , page_location
                 FROM a 
             )
-            SELECT * FROM b;
+            SELECT * FROM b
         """,
         'visits': """
             TRUNCATE TABLE cdm.table_visits;
