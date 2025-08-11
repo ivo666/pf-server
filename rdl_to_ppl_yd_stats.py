@@ -1,79 +1,67 @@
-# import pandas as pd
 from configparser import ConfigParser
 import psycopg2
 from psycopg2 import sql
+from psycopg2.extras import execute_batch  # Для более эффективной пакетной вставки
 
-# Читаем config
-config = ConfigParser()
-config.read('config.ini')
+def get_db_config():
+    """Чтение конфигурации БД из файла"""
+    config = ConfigParser()
+    config.read('config.ini')
+    return {
+        'host': config['Database']['HOST'],
+        'database': config['Database']['DATABASE'],
+        'user': config['Database']['USER'],
+        'password': config['Database']['PASSWORD'],
+        'port': config['Database']['PORT']
+    }
 
-# Настраиваем подключение
-db_connect = {
-    'host': config['Database']['HOST'],
-    'database': config['Database']['DATABASE'],
-    'user': config['Database']['USER'],
-    'password': config['Database']['PASSWORD'],
-    'port': config['Database']['PORT']
-}
-
-# Содаем переменную-sql-запрос чтения данных
-query = """
-select date
- , campaign_id
- , cn.utm_campaign
- , ad_id as content_id
- , cn.content_profit as content_benefit
- , impressions
- , clicks
- , round((cost * 1.0 / 1000000) / NULLIF(clicks, 0), 2) as click_cost
- , avg_click_position as click_position
- , device
- , location_of_presence_id
- , match_type
- , slot
-from rdl.yd_ad_performance_report yapr
-join (select campaign
-     , utm_campaign
-     , content_id
-     , content_profit
-    from rdl.yd_campaigns_list ycl
-    order by campaign, utm_campaign
-) cn on cn.campaign = yapr.campaign_name and cn.content_id = yapr.ad_id::text
-"""
-
-# Настраиваем подключение
-
+def get_data_query():
+    """SQL-запрос для получения данных"""
+    return """
+    SELECT date,
+           campaign_id,
+           cn.utm_campaign,
+           ad_id AS content_id,
+           cn.content_profit AS content_benefit,
+           impressions,
+           clicks,
+           ROUND((cost * 1.0 / 1000000) / NULLIF(clicks, 0), 2) AS click_cost,
+           avg_click_position AS click_position,
+           device,
+           location_of_presence_id,
+           match_type,
+           slot
+    FROM rdl.yd_ad_performance_report yapr
+    JOIN (SELECT campaign,
+                 utm_campaign,
+                 content_id,
+                 content_profit
+          FROM rdl.yd_campaigns_list ycl
+          ORDER BY campaign, utm_campaign) cn 
+      ON cn.campaign = yapr.campaign_name AND cn.content_id = yapr.ad_id::text
+    """
 
 def connection():
+    """Основная функция для подключения и обработки данных"""
+    conn = None
     try:
-        conn = None
-        conn = psycopg2.connect(**db_connect)
-        print('Успешное подключение к постгрес')
-
-        # Создание курсора с использованием конструкции with
-        # with - это менеджер контекста в Python
-        # Он гарантирует, что курсор cur будет автоматически закрыт после выхода из блока, даже если возникнет исключение
-        # Это заменяет необходимость вручную вызывать cur.close()
-        # Также обеспечивает более чистый и безопасный код
+        # Подключаемся к БД
+        conn = psycopg2.connect(**get_db_config())
+        print('Успешное подключение к PostgreSQL')
 
         with conn.cursor() as cur:
-            cur.execute(query)
+            # Получаем данные
+            cur.execute(get_data_query())
             data = cur.fetchall()
-
-            # Вся строка представляет собой list comprehension, который создает список имён столбцов
+            
+            if not data:
+                print("Нет данных для вставки")
+                return
+            
             colnames = [desc[0] for desc in cur.description]
-            print(colnames)
+            print(f"Колонки: {colnames}")
 
-            # Подготавливаем запрос на вставку
-            # sql.SQL() - безопасный способ создания SQL-запросов в psycopg2
-            # {} - плейсхолдеры для динамических частей запроса
-            # Первый .format() вставляет список столбцов:
-            # map(sql.Identifier, colnames) преобразует каждое имя столбца в безопасный идентификатор
-            # sql.SQL(', ').join() соединяет их через запятую
-            # Второй .format() вставляет плейсхолдеры для значений:
-            # [sql.Placeholder()] * len(colnames) создаёт список плейсхолдеров (по одному на каждый столбец)
-            # sql.SQL(', ').join() соединяет их через запятую
-
+            # Подготавливаем запрос на вставку с обработкой конфликтов
             insert_query = sql.SQL("""
                 INSERT INTO ppl.yd_stats ({})
                 VALUES ({})
@@ -88,25 +76,18 @@ def connection():
                     sql.SQL(', ').join(map(sql.Identifier, colnames)),
                     sql.SQL(', ').join([sql.Placeholder()] * len(colnames)))
 
-            # Вставляем данные
-            cur.executemany(insert_query, data)
-
-            # Подтверждает все изменения, сделанные в текущей транзакции
-            # Без commit() все изменения будут отменены при закрытии соединения
-            # В PostgreSQL изменения не видны другим соединениям до вызова commit()
-            # Расположен после executemany, чтобы гарантировать, что все данные вставлены успешно
+            # Используем execute_batch для более эффективной пакетной вставки
+            execute_batch(cur, insert_query, data, page_size=1000)
+            
             conn.commit()
+            print(f"Успешно обработано {len(data)} записей")
 
-            print(f"Успешно вставлено {len(data)} записей")
-
-        # cur = conn.cursor()
-        # # Выполнение запроса, вычисляем одно значение
-        # cur.execute('SELECT count(*) FROM yandex_metrika_visits')
-        # res = cur.fetchone()
-        # print(f'Результат запроса: {res[0]}')
-
-    except (psycopg2.DatabaseError, Exception) as e:
-        print(f"Ошибка: {e}")
+    except psycopg2.DatabaseError as e:
+        print(f"Ошибка базы данных: {e}")
+        if conn:
+            conn.rollback()
+    except Exception as e:
+        print(f"Неожиданная ошибка: {e}")
         if conn:
             conn.rollback()
     finally:
@@ -114,5 +95,5 @@ def connection():
             conn.close()
             print("Соединение закрыто")
 
-
-connection()
+if __name__ == "__main__":
+    connection()
