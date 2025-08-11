@@ -1,7 +1,7 @@
 from configparser import ConfigParser
 import psycopg2
 from psycopg2 import sql
-from psycopg2.extras import execute_batch  # Для более эффективной пакетной вставки
+from psycopg2.extras import execute_batch
 
 def get_db_config():
     """Чтение конфигурации БД из файла"""
@@ -61,26 +61,24 @@ def connection():
             colnames = [desc[0] for desc in cur.description]
             print(f"Колонки: {colnames}")
 
-            # Подготавливаем запрос на вставку с обработкой конфликтов
+            # 1. Очищаем целевую таблицу
+            truncate_query = "TRUNCATE TABLE ppl.yd_stats"
+            cur.execute(truncate_query)
+            print("Целевая таблица очищена")
+            
+            # 2. Вставляем новые данные
             insert_query = sql.SQL("""
                 INSERT INTO ppl.yd_stats ({})
                 VALUES ({})
-                ON CONFLICT ON CONSTRAINT yd_stats_unique 
-                DO UPDATE SET 
-                    content_benefit = EXCLUDED.content_benefit,
-                    impressions = EXCLUDED.impressions,
-                    clicks = EXCLUDED.clicks,
-                    click_cost = EXCLUDED.click_cost,
-                    click_position = EXCLUDED.click_position
                 """).format(
                     sql.SQL(', ').join(map(sql.Identifier, colnames)),
                     sql.SQL(', ').join([sql.Placeholder()] * len(colnames)))
 
-            # Используем execute_batch для более эффективной пакетной вставки
+            # Используем execute_batch для эффективной пакетной вставки
             execute_batch(cur, insert_query, data, page_size=1000)
             
             conn.commit()
-            print(f"Успешно обработано {len(data)} записей")
+            print(f"Успешно вставлено {len(data)} записей")
 
     except psycopg2.DatabaseError as e:
         print(f"Ошибка базы данных: {e}")
