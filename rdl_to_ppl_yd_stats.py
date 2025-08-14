@@ -30,7 +30,12 @@ def get_data_query():
            device,
            location_of_presence_id,
            match_type,
-           slot
+           slot, 
+           case
+           	when cn.utm_campaign = 'FVCART_OBSHCHAYA_POISK' then 'obshchaya'
+           	when cn.utm_campaign in ('FVCART_AB_SSH_POISK', 'FVCART_S_G_POISK', 'FVCART_В_G_POISK', 'FVCART_AA_SS_POISK') then 'group'
+           	else 'product'
+           end as campaign_type 
     FROM rdl.yd_ad_performance_report yapr
     JOIN (SELECT campaign,
                  utm_campaign,
