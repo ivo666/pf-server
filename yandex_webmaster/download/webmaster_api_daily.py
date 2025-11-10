@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 from psycopg2.extras import execute_values
 
 # Загружаем переменные окружения из .env файла
-load_dotenv()
+env_path = '/home/pf-server/yandex_webmaster/config/.env'
+load_dotenv(env_path)
 
 # Настройки авторизации
 API_TOKEN = os.getenv('API_TOKEN')
@@ -20,11 +21,11 @@ headers = {
 
 # Настройки подключения к БД из .env файла
 DB_CONFIG = {
-    'host': os.getenv('HOST', 'localhost'),
-    'port': os.getenv('PORT', '5432'),
-    'database': os.getenv('NAME'),
-    'user': os.getenv('USER'),
-    'password': os.getenv('PASSWORD')
+    'host': os.getenv('DB_HOST'),
+    'port': os.getenv('DB_PORT'),
+    'database': os.getenv('DB_NAME'),
+    'user': os.getenv('DB_USER'),
+    'password': os.getenv('DB_PASSWORD')
 }
 
 def get_existing_dates_from_db(conn):
@@ -348,6 +349,11 @@ def main():
         # Подключаемся к БД
         print("\n🗄️ Подключаемся к базе данных...")
         try:
+            print(f"🔧 DB_CONFIG: {DB_CONFIG}")
+            # Скрываем пароль для безопасности
+            db_config_safe = DB_CONFIG.copy()
+            db_config_safe['password'] = '***'
+            print(f"🔧 Подключаемся с параметрами: {db_config_safe}") 
             conn = psycopg2.connect(**DB_CONFIG)
             print("✅ Подключение к БД установлено")
             

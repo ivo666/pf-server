@@ -180,7 +180,7 @@ class YMVisitsDownloader:
                 # Создаем временную таблицу для новых данных
                 cur.execute("""
                     CREATE TEMP TABLE temp_visits_data (
-                        LIKE row.yandex_metrika_visits
+                        LIKE rdl.yandex_metrika_visits
                     ) ON COMMIT DROP
                 """)
                 
@@ -210,10 +210,10 @@ class YMVisitsDownloader:
                 
                 # Вставляем только новые данные, которых нет в основной таблице
                 sql_final = """
-                    INSERT INTO row.yandex_metrika_visits
+                    INSERT INTO rdl.yandex_metrika_visits
                     SELECT * FROM temp_visits_data t
                     WHERE NOT EXISTS (
-                        SELECT 1 FROM row.yandex_metrika_visits m
+                        SELECT 1 FROM rdl.yandex_metrika_visits m
                         WHERE m.visit_id = t.visit_id
                     )
                 """
