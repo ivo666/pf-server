@@ -1,68 +1,9 @@
-# Стандартные исключения для Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Файлы окружения и конфигурации
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-config.ini  # Исключаем файл с токенами и паролями
-secrets.py
-*.env
-
-# Данные (если не хотите коммитить сырые CSV/JSON)
-data/raw/
-data/temp/
-*.csv
-*.json
-*.xlsx
-
-# Исключения для IDE и ОС
-.DS_Store
-.idea/
-.vscode/
-*.swp
-*.swo
-*.log
-*.sqlite3
-
-# Исключения для Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# Исключения для Git LFS (если используете)
-*.zip
-*.gz
-*.7z
-
-# Исключения для специфичных файлов проекта
-/pf_event/
-/downloads/
+# Конфиги с паролями
 config.ini
-.env
-*.log
+**/.env
+**/*.log
+venv/
+__pycache__/
+*.pyc
+*.tar.gz
+crontab_backup_*.txt
