@@ -9,6 +9,9 @@ import math
 env_path = '/home/pf-server/yandex_webmaster/config/.env'
 load_dotenv(env_path)
 
+def log_message(message):
+    print(f"[{pd.Timestamp.now().strftime('%H:%M:%S')}] {message}")
+
 def get_connection():
     return psycopg2.connect(
         dbname=os.getenv('DB_NAME'),
