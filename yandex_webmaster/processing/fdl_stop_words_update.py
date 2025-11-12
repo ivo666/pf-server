@@ -29,17 +29,20 @@ def get_stop_words_from_sheets(cfg):
     """Получение стоп-слов из Google Sheets"""
     try:
         gc = gspread.service_account(filename=cfg['gsheets']['creds_path'])
-        worksheet = gc.open(cfg['gsheets']['spreadsheet']).worksheet(cfg['gsheets']['worksheet'])
+        spreadsheet = gc.open(cfg['gsheets']['spreadsheet'])
+        worksheet = spreadsheet.worksheet(cfg['gsheets']['worksheet'])
         
         # Получаем все значения из первой колонки
         all_values = worksheet.col_values(1)
         
         # Удаляем заголовок если есть и пустые значения
-        stop_words = [word.strip() for word in all_values if word and word.strip()]
-        
-        # Если первый элемент - заголовок "stop_word", удаляем его
-        if stop_words and stop_words[0].lower() == 'stop_word':
-            stop_words = stop_words[1:]
+        stop_words = []
+        for word in all_values:
+            if word and str(word).strip():
+                cleaned_word = str(word).strip()
+                # Пропускаем заголовок
+                if cleaned_word.lower() != 'stop_word':
+                    stop_words.append(cleaned_word)
             
         logging.info(f"Получено значений из Google Sheets: {len(all_values)}, после очистки: {len(stop_words)}")
         return stop_words
@@ -60,7 +63,8 @@ def prepare_stop_words_df(stop_words_list):
     df['stop_word'] = df['stop_word'].str.strip()
     df = df[df['stop_word'] != '']
     
-    logging.info(f"Примеры стоп-слов: {df['stop_word'].head().tolist()}")
+    if not df.empty:
+        logging.info(f"Примеры стоп-слов: {df['stop_word'].head().tolist()}")
     return df
 
 def replace_stop_words_in_db(engine, df):
