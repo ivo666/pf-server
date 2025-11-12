@@ -28,24 +28,37 @@ def load_config():
 def get_stop_words_from_sheets(cfg):
     """Получение стоп-слов из Google Sheets"""
     try:
+        logging.info(f"Используем credentials: {cfg['gsheets']['creds_path']}")
+        logging.info(f"Ищем таблицу: {cfg['gsheets']['spreadsheet']}")
+        logging.info(f"Ищем лист: {cfg['gsheets']['worksheet']}")
+        
         gc = gspread.service_account(filename=cfg['gsheets']['creds_path'])
+        
+        # Получаем список всех таблиц для диагностики
+        all_spreadsheets = gc.openall()
+        logging.info(f"Доступные таблицы: {[sh.title for sh in all_spreadsheets]}")
+        
         spreadsheet = gc.open(cfg['gsheets']['spreadsheet'])
         worksheet = spreadsheet.worksheet(cfg['gsheets']['worksheet'])
         
         # Получаем все значения из первой колонки
         all_values = worksheet.col_values(1)
+        logging.info(f"Сырые данные из колонки: {all_values}")
         
-        # Удаляем заголовок если есть и пустые значения
+        # Очистка данных
         stop_words = []
         for word in all_values:
             if word and str(word).strip():
                 cleaned_word = str(word).strip()
-                # Пропускаем заголовок
                 if cleaned_word.lower() != 'stop_word':
                     stop_words.append(cleaned_word)
             
-        logging.info(f"Получено значений из Google Sheets: {len(all_values)}, после очистки: {len(stop_words)}")
+        logging.info(f"После очистки: {stop_words}")
         return stop_words
+        
+    except Exception as e:
+        logging.error(f"Ошибка при получении данных из Google Sheets: {str(e)}")
+        raise
         
     except Exception as e:
         logging.error(f"Ошибка при получении данных из Google Sheets: {str(e)}")
