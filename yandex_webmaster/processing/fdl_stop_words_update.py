@@ -87,7 +87,7 @@ def replace_stop_words_in_db(engine, df):
             conn.execute(text("TRUNCATE TABLE fdl.webm_stop_words"))
             
             if not df.empty:
-                df.to_sql('stop_words', conn, schema='fdl', if_exists='append', index=False)
+                df.to_sql('webm_stop_words', conn, schema='fdl', if_exists='append', index=False)
                 logging.info(f"Успешно загружено {len(df)} стоп-слов в БД")
             else:
                 logging.warning("Нет данных для загрузки в БД")
