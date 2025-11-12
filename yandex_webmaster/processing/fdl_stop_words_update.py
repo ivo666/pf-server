@@ -3,6 +3,7 @@ import gspread
 from sqlalchemy import create_engine, text
 import logging
 import sys
+import configparser
 
 # Настройка логирования
 logging.basicConfig(
