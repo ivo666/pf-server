@@ -84,7 +84,7 @@ def replace_stop_words_in_db(engine, df):
     """Полная замена стоп-слов в базе данных"""
     try:
         with engine.begin() as conn:
-            conn.execute(text("TRUNCATE TABLE fdl.stop_words"))
+            conn.execute(text("TRUNCATE TABLE fdl.webm_stop_words"))
             
             if not df.empty:
                 df.to_sql('stop_words', conn, schema='fdl', if_exists='append', index=False)
