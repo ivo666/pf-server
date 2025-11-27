@@ -1,4 +1,4 @@
-iimport pandas as pd
+import pandas as pd
 import gspread
 from sqlalchemy import create_engine, text
 import logging
