@@ -1,9 +1,14 @@
-import pandas as pd
+iimport pandas as pd
 import gspread
 from sqlalchemy import create_engine, text
 import logging
 import sys
-import configparser
+import os
+from dotenv import load_dotenv
+
+# Загрузка переменных окружения из .env файла
+env_path = '/home/pf-server/yandex_webmaster/config/.env'
+load_dotenv(env_path)
 
 # Настройка логирования
 logging.basicConfig(
@@ -13,15 +18,32 @@ logging.basicConfig(
 )
 
 def load_config():
-    """Загрузка конфигурации из config.ini"""
-    config = configparser.ConfigParser()
-    config.read('config.ini')
+    """Загрузка конфигурации из переменных окружения"""
+    # Проверяем, что переменные загружены
+    required_vars = [
+        'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD',
+        'GOOGLE_CREDENTIALS_PATH', 'GOOGLE_SPREADSHEET_NAME', 'GOOGLE_WORKSHEET_NAME'
+    ]
+    
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    if missing_vars:
+        logging.error(f"Отсутствуют обязательные переменные окружения: {missing_vars}")
+        raise ValueError(f"Отсутствуют переменные в .env файле: {missing_vars}")
+    
+    logging.info("Все обязательные переменные окружения найдены")
+    
     return {
-        'db': dict(config['Database']),
+        'db': {
+            'host': os.getenv('DB_HOST'),
+            'port': os.getenv('DB_PORT', '5432'),
+            'database': os.getenv('DB_NAME'),
+            'user': os.getenv('DB_USER'),
+            'password': os.getenv('DB_PASSWORD')
+        },
         'gsheets': {
-            'creds_path': config['GoogleSheets']['CREDENTIALS_PATH'],
-            'spreadsheet': "ProfiFiltr_webmaster_stop_queryes",
-            'worksheet': "stop_queryes"
+            'creds_path': os.getenv('GOOGLE_CREDENTIALS_PATH'),
+            'spreadsheet': os.getenv('GOOGLE_SPREADSHEET_NAME'),
+            'worksheet': os.getenv('GOOGLE_WORKSHEET_NAME')
         }
     }
 
